@@ -76,7 +76,14 @@ def run_web(
     _controller = DeviceController(mqtt_client, device_types)
 
     log.info("Starting web dashboard on http://0.0.0.0:%d", port)
-    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+
+    from werkzeug.serving import make_server
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
+    server = make_server("0.0.0.0", port, app)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        server.shutdown()
 
 
 # ---------------------------------------------------------------------------
