@@ -256,6 +256,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
            transition: opacity 0.3s; z-index: 100; }
   .toast.show { opacity: 1; }
   .tab-btn.active { border-color: var(--cyan); color: var(--cyan); }
+  .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  @media (max-width: 600px) { .chart-grid { grid-template-columns: 1fr; } }
   .subtitle { color: var(--dim); font-size: 11px; margin-top: 4px; }
   .health { font-size: 11px; margin-top: 4px; }
   .health-green { color: var(--green); }
@@ -287,7 +289,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
     </select>
     <select id="chart-device" class="btn" onchange="chartDeviceChanged()"></select>
   </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+  <div class="chart-grid">
     <div><canvas id="chart-soc" height="150"></canvas></div>
     <div><canvas id="chart-power" height="150"></canvas></div>
   </div>
