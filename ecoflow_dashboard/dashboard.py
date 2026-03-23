@@ -570,14 +570,12 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
     ct.add_column("#", style="dim", width=2)
     ct.add_column("Name", width=8)
     ct.add_column("Power", justify="right", width=7)
-    ct.add_column("Amps", justify="right", width=5)
     ct.add_column("Mode", width=4)
     ct.add_column("Priority", justify="center", width=8)
     ct.add_column("│", style="dim", width=1)
     ct.add_column("#", style="dim", width=2)
     ct.add_column("Name", width=8)
     ct.add_column("Power", justify="right", width=7)
-    ct.add_column("Amps", justify="right", width=5)
     ct.add_column("Mode", width=4)
     ct.add_column("Priority", justify="center", width=8)
 
@@ -588,20 +586,16 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
                 row.append("│")
             idx, w, cur, mode, priority, ch_name = circuit_data[col]
             w_style = "bold" if w > 100 else "" if w > 0 else "dim"
-            mode_txt = "A" if mode == 0 else "M" if mode == 1 else "-"
+            mode_txt = "Auto" if mode == 0 else "Man" if mode == 1 else "-"
             pri_txt = str(int(priority)) if priority else "-"
-            cur_txt = f"{cur:.1f}" if cur else "--"
             row.extend([
                 str(idx + 1),
                 Text(ch_name[:8] if ch_name else "", style="dim"),
                 Text(_fmt_watts(w), style=w_style),
-                Text(cur_txt, style="dim" if not cur else ""),
                 Text(mode_txt, style="dim"),
                 Text(pri_txt, style="dim"),
             ])
         ct.add_row(*row)
-
-    total_a_txt = f" ({total_amps:.1f}A)" if total_amps else ""
 
     # ── System footer ──
     emerg_backup = _get(data, "emergencyStrategy.backupMode")
@@ -620,7 +614,7 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
     elements.extend(batt_lines)
     elements.extend(["", ct])
 
-    subtitle_parts = [f"[bold]{_fmt_watts(total_load)}[/]{total_a_txt}"]
+    subtitle_parts = [f"[bold]{_fmt_watts(total_load)}[/]"]
     if sys_parts:
         subtitle_parts.append(" | ".join(sys_parts))
 
