@@ -1,0 +1,19 @@
+# Credentials & secrets
+.env
+
+# Database with device history
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Claude Code
+.claude/
+
+# IDE
+.vscode/
+.idea/
