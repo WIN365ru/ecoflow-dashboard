@@ -532,14 +532,36 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
         ))
 
     # ── Circuits (2-column, 6 rows) ──
-    # Build Delta Pro labels for circuits 11/12
-    dp_labels: dict[int, str] = {}
-    dp_efficiency: dict[int, str] = {}
+    # Match Delta Pros to circuits 11/12 by power flow (not fixed index)
+    # Circuit with power > 0 matches the Delta Pro with matching input watts
+    dp_circuit_map: dict[int, tuple[str, dict]] = {}  # circuit_index → (sn, data)
     if dp_data:
-        for dp_idx, (dp_sn, dp_d) in enumerate(dp_data):
-            circuit_idx = 10 + dp_idx  # circuit 11=index 10, 12=index 11
-            short_sn = dp_sn[-6:] if len(dp_sn) > 6 else dp_sn
-            dp_labels[circuit_idx] = f"DP{dp_idx+1}"
+        batt_circuits = []
+        for ci in [10, 11]:
+            cw = _get(data,
+                      f"infoList.{ci}.chWatt",
+                      f"loadCmdChCtrlInfos.{ci}.ctrlWatt")
+            batt_circuits.append((ci, cw))
+
+        # Match each Delta Pro to its circuit by closest power match
+        unmatched_dp = list(dp_data)
+        for ci, cw in sorted(batt_circuits, key=lambda x: -x[1]):  # highest power first
+            if cw > 0 and unmatched_dp:
+                # Find the DP with closest wattsInSum to this circuit's power
+                best_idx = 0
+                best_diff = float("inf")
+                for di, (dp_sn, dp_d) in enumerate(unmatched_dp):
+                    dp_in = float(dp_d.get("pd.wattsInSum", 0) or 0)
+                    diff = abs(cw - dp_in)
+                    if diff < best_diff:
+                        best_diff = diff
+                        best_idx = di
+                dp_circuit_map[ci] = unmatched_dp.pop(best_idx)
+
+        # Assign remaining DPs to remaining circuits
+        for ci, cw in batt_circuits:
+            if ci not in dp_circuit_map and unmatched_dp:
+                dp_circuit_map[ci] = unmatched_dp.pop(0)
 
     # Collect all circuit data
     circuit_data = []
@@ -567,16 +589,16 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
                 ch_name = v
                 break
 
-        # Auto-label circuits 11/12 as Delta Pro connections
-        if not ch_name and i in dp_labels:
-            ch_name = dp_labels[i]
-
-        # Calculate charging efficiency for battery circuits
+        # Auto-label circuits 11/12 with matched Delta Pro
         eff_txt = ""
-        if i in dp_labels and dp_data and w > 0:
-            dp_idx = i - 10
-            if dp_idx < len(dp_data):
-                _, dp_d = dp_data[dp_idx]
+        if i in dp_circuit_map:
+            dp_sn, dp_d = dp_circuit_map[i]
+            short_sn = dp_sn[-4:]
+            if not ch_name:
+                ch_name = f"DP.{short_sn}"
+
+            # Charging efficiency
+            if w > 0:
                 dp_in = float(dp_d.get("pd.wattsInSum", 0) or 0)
                 if dp_in > 0:
                     eff = dp_in / w * 100
