@@ -6,11 +6,13 @@ import sys
 
 from rich.console import Console
 
+from . import __version__
 from .api import DeviceInfo, fetch_device_list, fetch_device_quota, fetch_mqtt_credentials
 from .config import AUTH_PRIVATE, load_config
 from .dashboard import DELTA_PRO, SMART_HOME_PANEL, run_dashboard
 from .logger import DataLogger
 from .mqtt_client import EcoFlowMqttClient
+from .version_check import VersionChecker
 
 console = Console()
 
@@ -35,6 +37,7 @@ def _detect_type_from_sn(sn: str) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="EcoFlow CLI Dashboard")
+    parser.add_argument("--version", action="version", version=f"ecoflow-dashboard {__version__}")
     parser.add_argument("--env-file", default=".env", help="Path to .env file")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--dump", action="store_true", help="Dump all device data keys and exit")
@@ -128,10 +131,14 @@ def main() -> None:
         data_logger.start()
         console.print(f"[dim]Logging to {args.db} every {args.log_interval}s[/]")
 
-    console.print("Starting dashboard...")
+    # Check for updates (non-blocking)
+    version_checker = VersionChecker()
+    version_checker.start()
+
+    console.print(f"Starting dashboard v{__version__}...")
 
     try:
-        run_dashboard(mqtt_client, device_types, device_names)
+        run_dashboard(mqtt_client, device_types, device_names, version_checker=version_checker)
     except KeyboardInterrupt:
         pass
     finally:

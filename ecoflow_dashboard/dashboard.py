@@ -706,15 +706,20 @@ def build_dashboard(
     selected_sn: str = "",
     status_msg: str = "",
     commands: dict | None = None,
+    update_msg: str = "",
 ) -> Group:
+    from . import __version__
+
     panels = []
 
     status = "[green]MQTT Connected[/]" if mqtt_client.connected else "[red]MQTT Disconnected[/]"
     header = Text.from_markup(
-        f"[bold]EcoFlow Dashboard[/]  {status}  "
+        f"[bold]EcoFlow Dashboard[/] [dim]v{__version__}[/]  {status}  "
         f"[dim]{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/]"
     )
     panels.append(header)
+    if update_msg:
+        panels.append(Text.from_markup(f"  [bold yellow]{update_msg}[/]"))
     panels.append(Text(""))
 
     sns = list(device_types.keys())
@@ -769,6 +774,7 @@ def run_dashboard(
     mqtt_client: EcoFlowMqttClient,
     device_types: dict[str, str],
     device_names: dict[str, str],
+    version_checker: object | None = None,
 ) -> None:
     import queue as _queue
     from .controls import DeviceController, KeyboardThread
@@ -816,11 +822,17 @@ def run_dashboard(
                 else:
                     status_msg = ""
 
+                # Update notification from background check
+                update_msg = ""
+                if version_checker and hasattr(version_checker, "message") and version_checker.message:
+                    update_msg = version_checker.message
+
                 live.update(build_dashboard(
                     mqtt_client, device_types, device_names,
                     selected_sn=selected_sn,
                     status_msg=status_msg,
                     commands=controller.get_commands(selected_sn),
+                    update_msg=update_msg,
                 ))
                 time.sleep(0.5)
     finally:
