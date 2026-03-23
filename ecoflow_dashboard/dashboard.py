@@ -412,7 +412,8 @@ def _mah_to_wh(mah: float) -> float:
     return mah
 
 
-def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HOME_PANEL) -> Panel:
+def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HOME_PANEL,
+                     dp_data: list[tuple[str, dict]] | None = None) -> Panel:
     type_label = DEVICE_TYPE_LABELS.get(device_type, device_type)
 
     # ── Grid + Energy (compact: 2 lines) ──
@@ -531,18 +532,23 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
         ))
 
     # ── Circuits (2-column, 6 rows) ──
-    # Collect all circuit data first
+    # Build Delta Pro labels for circuits 11/12
+    dp_labels: dict[int, str] = {}
+    dp_efficiency: dict[int, str] = {}
+    if dp_data:
+        for dp_idx, (dp_sn, dp_d) in enumerate(dp_data):
+            circuit_idx = 10 + dp_idx  # circuit 11=index 10, 12=index 11
+            short_sn = dp_sn[-6:] if len(dp_sn) > 6 else dp_sn
+            dp_labels[circuit_idx] = f"DP{dp_idx+1}"
+
+    # Collect all circuit data
     circuit_data = []
     total_load = 0.0
-    total_amps = 0.0
     for i in range(12):
         w = _get(data,
                  f"infoList.{i}.chWatt",
                  f"loadCmdChCtrlInfos.{i}.ctrlWatt",
                  f"heartbeat.loadCmdChCtrlInfos.{i}.ctrlWatt")
-        cur = _get(data,
-                   f"loadChCurInfo.cur.{i}",
-                   f"heartbeat.loadChCurInfo.cur.{i}")
         mode = _get(data,
                     f"loadCmdChCtrlInfos.{i}.ctrlMode",
                     f"heartbeat.loadCmdChCtrlInfos.{i}.ctrlMode")
@@ -561,9 +567,24 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
                 ch_name = v
                 break
 
-        circuit_data.append((i, w, cur, mode, priority, ch_name))
+        # Auto-label circuits 11/12 as Delta Pro connections
+        if not ch_name and i in dp_labels:
+            ch_name = dp_labels[i]
+
+        # Calculate charging efficiency for battery circuits
+        eff_txt = ""
+        if i in dp_labels and dp_data and w > 0:
+            dp_idx = i - 10
+            if dp_idx < len(dp_data):
+                _, dp_d = dp_data[dp_idx]
+                dp_in = float(dp_d.get("pd.wattsInSum", 0) or 0)
+                if dp_in > 0:
+                    eff = dp_in / w * 100
+                    eff_c = "green" if eff >= 95 else "yellow" if eff >= 90 else "red"
+                    eff_txt = f" [{eff_c}]{eff:.0f}%[/]"
+
+        circuit_data.append((i, w, mode, priority, ch_name, eff_txt))
         total_load += w
-        total_amps += cur
 
     # 2-column circuit table: left=circuits 1-6, right=circuits 7-12
     ct = Table(show_header=True, show_edge=False, pad_edge=False, title="Circuits")
@@ -584,14 +605,16 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
         for j, col in enumerate([row_idx, row_idx + 6]):
             if j > 0:
                 row.append("│")
-            idx, w, cur, mode, priority, ch_name = circuit_data[col]
+            idx, w, mode, priority, ch_name, eff_txt = circuit_data[col]
             w_style = "bold" if w > 100 else "" if w > 0 else "dim"
             mode_txt = "Auto" if mode == 0 else "Man" if mode == 1 else "-"
             pri_txt = str(int(priority)) if priority else "-"
+            # Show power with efficiency for Delta Pro circuits
+            power_markup = f"{_fmt_watts(w)}{eff_txt}" if eff_txt else _fmt_watts(w)
             row.extend([
                 str(idx + 1),
-                Text(ch_name[:8] if ch_name else "", style="dim"),
-                Text(_fmt_watts(w), style=w_style),
+                Text(ch_name[:8] if ch_name else "", style="cyan" if idx >= 10 else "dim"),
+                Text.from_markup(power_markup) if eff_txt else Text(_fmt_watts(w), style=w_style),
                 Text(mode_txt, style="dim"),
                 Text(pri_txt, style="dim"),
             ])
@@ -675,18 +698,27 @@ def build_dashboard(
     sns = list(device_types.keys())
     selected_idx = sns.index(selected_sn) if selected_sn in sns else 0
 
-    # Collect panels by type
+    # Collect panels by type — gather Delta Pro data for SHP efficiency calc
     delta_panels = []
+    delta_pro_data: list[tuple[str, dict]] = []
     other_panels = []
     for sn, dtype in device_types.items():
         data = mqtt_client.get_device_data(sn)
         name = device_names.get(sn, sn)
         if dtype == DELTA_PRO:
             delta_panels.append(_build_delta_pro_panel(sn, data, name, dtype))
+            delta_pro_data.append((sn, data))
         elif dtype == SMART_HOME_PANEL:
-            other_panels.append(_build_shp_panel(sn, data, name, dtype))
+            pass  # build after collecting Delta Pro data
         else:
             other_panels.append(Panel(f"Unknown device type: {dtype}", title=sn))
+
+    # Build SHP panels with Delta Pro data for efficiency
+    for sn, dtype in device_types.items():
+        if dtype == SMART_HOME_PANEL:
+            data = mqtt_client.get_device_data(sn)
+            name = device_names.get(sn, sn)
+            other_panels.append(_build_shp_panel(sn, data, name, dtype, dp_data=delta_pro_data))
 
     # Place Delta Pros side by side if there are exactly 2
     if len(delta_panels) == 2:
