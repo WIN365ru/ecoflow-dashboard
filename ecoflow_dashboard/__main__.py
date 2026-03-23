@@ -44,6 +44,8 @@ def main() -> None:
     parser.add_argument("--log-interval", type=int, default=300, help="SQLite logging interval in seconds (default: 300)")
     parser.add_argument("--db", default="ecoflow_history.db", help="SQLite database path (default: ecoflow_history.db)")
     parser.add_argument("--no-log", action="store_true", help="Disable SQLite logging")
+    parser.add_argument("--web", action="store_true", help="Start web dashboard instead of CLI")
+    parser.add_argument("--web-port", type=int, default=5000, help="Web dashboard port (default: 5000)")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -135,17 +137,34 @@ def main() -> None:
     version_checker = VersionChecker()
     version_checker.start()
 
-    console.print(f"Starting dashboard v{__version__}...")
+    if args.web:
+        from .web import run_web
+        console.print(f"Starting web dashboard v{__version__} on http://0.0.0.0:{args.web_port}")
+        try:
+            run_web(mqtt_client, device_types, device_names, port=args.web_port)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if data_logger:
+                data_logger.stop()
+            mqtt_client.stop()
+            console.print("\nWeb dashboard stopped.")
+    else:
+        # Check for updates (non-blocking)
+        version_checker = VersionChecker()
+        version_checker.start()
 
-    try:
-        run_dashboard(mqtt_client, device_types, device_names, version_checker=version_checker)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        if data_logger:
-            data_logger.stop()
-        mqtt_client.stop()
-        console.print("\nDashboard stopped.")
+        console.print(f"Starting dashboard v{__version__}...")
+
+        try:
+            run_dashboard(mqtt_client, device_types, device_names, version_checker=version_checker)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if data_logger:
+                data_logger.stop()
+            mqtt_client.stop()
+            console.print("\nDashboard stopped.")
 
 
 if __name__ == "__main__":
