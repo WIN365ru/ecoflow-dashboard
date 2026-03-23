@@ -422,7 +422,7 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
     grid_freq = _get(data, "gridInfo.gridFreq", "gridFreq")
     grid_day_wh = _get(data, "gridDayWatth", "heartbeat.gridDayWatth")
     backup_day_wh = _get(data, "backupDayWatth", "heartbeat.backupDayWatth")
-    eps_mode = _get(data, "epsModeInfo.eps", "eps")
+    eps_mode = _get(data, "eps")
     self_check = _get(data, "selfCheck.result")
     self_check_err = _get(data, "selfCheck.errorCode")
 

@@ -45,7 +45,7 @@ DELTA_PRO_COMMANDS: dict[str, Command] = {
 
 # Smart Home Panel commands
 SHP_COMMANDS: dict[str, Command] = {
-    "e": Command("EPS Mode",       "epsModeInfo.eps",    24, "eps",          "toggle", cmd_set=11),
+    "e": Command("EPS Mode",       "eps",                24, "eps",          "toggle", cmd_set=11),
     "g": Command("Grid Charge B1", "energyInfos.0.stateBean.isGridCharge", 17, "",     "shp_grid_charge_1", cmd_set=11),
     "h": Command("Grid Charge B2", "energyInfos.1.stateBean.isGridCharge", 17, "",     "shp_grid_charge_2", cmd_set=11),
 }
