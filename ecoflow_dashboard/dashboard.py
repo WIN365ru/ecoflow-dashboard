@@ -217,13 +217,19 @@ def _build_delta_pro_panel(sn: str, data: dict, name: str, device_type: str = DE
             Text("", style="dim"), Text(""),
         )
 
-    # Efficiency: mppt.outWatts is DC bus power, total_out is user-facing output
+    # System efficiency: battery power drawn vs useful output
+    # Power drawn from battery = |current| * voltage
     mppt_out = _get(data, "mppt.outWatts")
+    batt_amp_raw = _get(data, "bmsMaster.amp")
+    batt_vol_raw = _get(data, "bmsMaster.vol")
     eff_str = ""
-    if mppt_out > 0 and total_out > 0:
-        eff = total_out / mppt_out * 100
-        eff_color = "green" if eff >= 90 else "yellow" if eff >= 80 else "red"
-        eff_str = f"  [{eff_color}]({eff:.0f}% eff)[/]"
+    if total_out > 0 and batt_amp_raw and batt_vol_raw:
+        batt_draw = abs(batt_amp_raw) * batt_vol_raw / 1e6  # mA * mV → W
+        if batt_draw > total_out * 0.5:  # sanity check
+            eff = total_out / batt_draw * 100
+            if eff <= 100:
+                eff_color = "green" if eff >= 90 else "yellow" if eff >= 80 else "red"
+                eff_str = f"  [{eff_color}]({eff:.0f}% eff)[/]"
 
     t.add_row(
         Text("Total In", style="bold dim"), Text(_fmt_watts(total_in), style="bold green" if total_in else "dim"),
