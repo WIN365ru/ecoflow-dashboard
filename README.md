@@ -40,7 +40,7 @@ EcoFlow Dashboard  MQTT Connected  2026-03-23 22:12:16
 |  Health: 94% (Excellent)  2.9 / 3.7 kWh      |  Health: 93% (Excellent)  1.7 / 3.7 kWh      |
 +-----------------------------------------------+-----------------------------------------------+
 
-+------------------------------- Smart Home Panel (SP10ZEW5ZEAQ0143) ------+
++------------------------------- Smart Home Panel (SP10ZEWXXXXXX) ----------+
 | Grid       ON (230V 50Hz)  Grid Today  15 kWh   Backup Today      0 Wh  |
 | Combined     47%  3.80 kWh  Limits     0%-100%   Sched Chg        OFF   |
 |                                                                          |

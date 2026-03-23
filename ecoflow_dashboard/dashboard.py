@@ -570,16 +570,16 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
     ct.add_column("#", style="dim", width=2)
     ct.add_column("Name", width=8)
     ct.add_column("Power", justify="right", width=7)
-    ct.add_column("A", justify="right", width=5)
-    ct.add_column("M", width=4)
-    ct.add_column("P", justify="center", width=2)
+    ct.add_column("Amps", justify="right", width=5)
+    ct.add_column("Mode", width=4)
+    ct.add_column("Pri", justify="center", width=3)
     ct.add_column("│", style="dim", width=1)
     ct.add_column("#", style="dim", width=2)
     ct.add_column("Name", width=8)
     ct.add_column("Power", justify="right", width=7)
-    ct.add_column("A", justify="right", width=5)
-    ct.add_column("M", width=4)
-    ct.add_column("P", justify="center", width=2)
+    ct.add_column("Amps", justify="right", width=5)
+    ct.add_column("Mode", width=4)
+    ct.add_column("Pri", justify="center", width=3)
 
     for row_idx in range(6):
         row = []
