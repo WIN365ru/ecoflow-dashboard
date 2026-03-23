@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
+import threading
+import time as _time
+from collections import deque
+from datetime import datetime
 
 from flask import Flask, Response, request
 
@@ -16,6 +21,11 @@ _mqtt: EcoFlowMqttClient | None = None
 _device_types: dict[str, str] = {}
 _device_names: dict[str, str] = {}
 _controller: DeviceController | None = None
+_db_path: str = ""
+
+# Live data ring buffer: {sn: deque of {ts, key: value, ...}}
+_live_buffer: dict[str, deque] = {}
+_LIVE_MAX = 1800  # 1 hour at 2s intervals
 
 app = Flask(__name__)
 
@@ -63,17 +73,105 @@ def api_command() -> Response:
     return Response(json.dumps({"result": result or "no action"}), content_type="application/json")
 
 
+@app.route("/api/live")
+def api_live() -> Response:
+    """Return live ring buffer data for charts."""
+    sn = request.args.get("sn", "")
+    if sn and sn in _live_buffer:
+        points = list(_live_buffer[sn])
+    else:
+        points = []
+    return Response(json.dumps(points), content_type="application/json")
+
+
+@app.route("/api/history")
+def api_history() -> Response:
+    """Query historical data from SQLite."""
+    if not _db_path:
+        return Response(json.dumps([]), content_type="application/json")
+    sn = request.args.get("sn", "")
+    key = request.args.get("key", "")
+    hours = int(request.args.get("hours", "24"))
+    if not sn:
+        return Response(json.dumps({"error": "sn required"}), status=400, content_type="application/json")
+    try:
+        with sqlite3.connect(_db_path) as conn:
+            if key:
+                rows = conn.execute(
+                    "SELECT timestamp, value FROM snapshots WHERE device_sn=? AND key=? "
+                    "AND timestamp >= datetime('now', ?) ORDER BY timestamp",
+                    (sn, key, f"-{hours} hours"),
+                ).fetchall()
+                return Response(
+                    json.dumps([{"ts": r[0], "v": r[1]} for r in rows]),
+                    content_type="application/json",
+                )
+            else:
+                # Return all keys for this device in the time range
+                rows = conn.execute(
+                    "SELECT timestamp, key, value FROM snapshots WHERE device_sn=? "
+                    "AND timestamp >= datetime('now', ?) ORDER BY timestamp",
+                    (sn, f"-{hours} hours"),
+                ).fetchall()
+                # Group by timestamp
+                result: dict[str, dict] = {}
+                for ts, k, v in rows:
+                    if ts not in result:
+                        result[ts] = {"ts": ts}
+                    result[ts][k] = v
+                return Response(
+                    json.dumps(list(result.values())),
+                    content_type="application/json",
+                )
+    except Exception as e:
+        return Response(json.dumps({"error": str(e)}), status=500, content_type="application/json")
+
+
+def _live_collector() -> None:
+    """Background thread collecting live data points every 2 seconds."""
+    while True:
+        if _mqtt:
+            for sn in _device_types:
+                data = _mqtt.get_device_data(sn)
+                point = {"ts": datetime.now().strftime("%H:%M:%S")}
+                # Collect key metrics
+                for k in [
+                    "ems.lcdShowSoc", "bmsMaster.soc", "bmsMaster.soh",
+                    "pd.wattsInSum", "pd.wattsOutSum", "mppt.inWatts",
+                    "inv.inputWatts", "inv.outputWatts", "pd.carWatts",
+                    "bmsMaster.temp", "bmsMaster.vol", "bmsMaster.amp",
+                    "backupBatPer", "gridDayWatth", "backupDayWatth",
+                    *[f"infoList.{i}.chWatt" for i in range(12)],
+                ]:
+                    v = data.get(k)
+                    if v is not None:
+                        try:
+                            point[k] = round(float(v), 2)
+                        except (TypeError, ValueError):
+                            pass
+                if sn not in _live_buffer:
+                    _live_buffer[sn] = deque(maxlen=_LIVE_MAX)
+                _live_buffer[sn].append(point)
+        _time.sleep(2)
+
+
 def run_web(
     mqtt_client: EcoFlowMqttClient,
     device_types: dict[str, str],
     device_names: dict[str, str],
     port: int = 5000,
+    db_path: str = "",
 ) -> None:
-    global _mqtt, _device_types, _device_names, _controller
+    global _mqtt, _device_types, _device_names, _controller, _db_path
     _mqtt = mqtt_client
     _device_types = device_types
     _device_names = device_names
     _controller = DeviceController(mqtt_client, device_types)
+    _db_path = db_path
+
+    # Start live data collector
+    collector = threading.Thread(target=_live_collector, daemon=True)
+    collector.start()
 
     log.info("Starting web dashboard on http://0.0.0.0:%d", port)
 
@@ -157,6 +255,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
            border-radius: 8px; font-weight: 600; opacity: 0;
            transition: opacity 0.3s; z-index: 100; }
   .toast.show { opacity: 1; }
+  .tab-btn.active { border-color: var(--cyan); color: var(--cyan); }
   .subtitle { color: var(--dim); font-size: 11px; margin-top: 4px; }
   .health { font-size: 11px; margin-top: 4px; }
   .health-green { color: var(--green); }
@@ -175,8 +274,31 @@ HTML_PAGE = r"""<!DOCTYPE html>
 </div>
 <div id="update-banner"></div>
 <div id="dashboard"></div>
+
+<div class="card" style="margin-top:8px">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px">
+    <span class="card-title" style="margin:0">Charts</span>
+    <button class="btn tab-btn active" onclick="setChartMode('live')">Live (1h)</button>
+    <button class="btn tab-btn" onclick="setChartMode('history')">History</button>
+    <select id="hist-hours" class="btn" style="display:none" onchange="loadHistory()">
+      <option value="1">1 hour</option><option value="6">6 hours</option>
+      <option value="24" selected>24 hours</option><option value="72">3 days</option>
+      <option value="168">7 days</option>
+    </select>
+    <select id="chart-device" class="btn" onchange="chartDeviceChanged()"></select>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+    <div><canvas id="chart-soc" height="150"></canvas></div>
+    <div><canvas id="chart-power" height="150"></canvas></div>
+  </div>
+  <div style="margin-top:8px">
+    <canvas id="chart-circuits" height="120"></canvas>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 
@@ -358,6 +480,7 @@ async function refresh() {
       html += '<div class="grid">' + buildSHP(sn, info.name, info.data, devs) + '</div>';
     }
     $('#dashboard').innerHTML = html;
+    updateDeviceSelector(devs);
   } catch(e) {
     console.error('refresh error', e);
   }
@@ -365,6 +488,189 @@ async function refresh() {
 
 refresh();
 setInterval(refresh, 2000);
+
+// ── Charts ──
+const chartOpts = {
+  responsive: true, animation: false,
+  scales: {
+    x: { ticks: { color: '#8b949e', maxTicksLimit: 10, font: {size:10} }, grid: { color: '#21262d' } },
+    y: { ticks: { color: '#8b949e', font: {size:10} }, grid: { color: '#21262d' } }
+  },
+  plugins: { legend: { labels: { color: '#e6edf3', font: {size:11} } } }
+};
+
+let chartSoc, chartPower, chartCircuits;
+let chartMode = 'live';
+let chartSn = '';
+let allDevicesList = {};
+
+function initCharts() {
+  if (chartSoc) return;
+  const mk = (id, cfg) => new Chart(document.getElementById(id), cfg);
+
+  chartSoc = mk('chart-soc', { type:'line', data:{labels:[],datasets:[]},
+    options:{...chartOpts, plugins:{...chartOpts.plugins, title:{display:true,text:'Battery SOC %',color:'#e6edf3'}},
+    scales:{...chartOpts.scales, y:{...chartOpts.scales.y, min:0,max:100}}} });
+
+  chartPower = mk('chart-power', { type:'line', data:{labels:[],datasets:[]},
+    options:{...chartOpts, plugins:{...chartOpts.plugins, title:{display:true,text:'Power (W)',color:'#e6edf3'}}} });
+
+  chartCircuits = mk('chart-bar', { type:'bar', data:{labels:[],datasets:[]},
+    options:{...chartOpts, plugins:{...chartOpts.plugins, title:{display:true,text:'Circuit Loads (W)',color:'#e6edf3'}}} });
+  // Actually use line for circuits over time too
+  chartCircuits.destroy();
+  chartCircuits = mk('chart-circuits', { type:'line', data:{labels:[],datasets:[]},
+    options:{...chartOpts, plugins:{...chartOpts.plugins, title:{display:true,text:'Circuit Loads (W)',color:'#e6edf3'}}} });
+}
+
+function setChartMode(mode) {
+  chartMode = mode;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => { if(b.textContent.toLowerCase().includes(mode)) b.classList.add('active'); });
+  document.getElementById('hist-hours').style.display = mode === 'history' ? '' : 'none';
+  if (mode === 'history') loadHistory();
+}
+
+function chartDeviceChanged() {
+  chartSn = document.getElementById('chart-device').value;
+  if (chartMode === 'history') loadHistory();
+}
+
+function updateDeviceSelector(devs) {
+  const sel = document.getElementById('chart-device');
+  const prev = sel.value;
+  const sns = Object.keys(devs);
+  if (sel.options.length !== sns.length) {
+    sel.innerHTML = sns.map(sn => `<option value="${sn}">${devs[sn].name} (${sn.slice(-6)})</option>`).join('');
+  }
+  if (!chartSn && sns.length) chartSn = sns[0];
+  if (prev) sel.value = prev;
+  allDevicesList = devs;
+}
+
+const COLORS = ['#3fb950','#f85149','#58a6ff','#d29922','#bc8cff','#ff7b72','#79c0ff','#56d364','#e3b341','#db61a2','#7ee787','#ffa657'];
+
+async function updateLiveCharts() {
+  if (!chartSn) return;
+  try {
+    const r = await fetch(`/api/live?sn=${chartSn}`);
+    const points = await r.json();
+    if (!points.length) return;
+
+    const labels = points.map(p => p.ts);
+    const dtype = allDevicesList[chartSn]?.type || '';
+
+    // SOC chart
+    if (dtype.includes('delta')) {
+      chartSoc.data = { labels, datasets: [
+        { label: 'SOC %', data: points.map(p => p['ems.lcdShowSoc'] ?? p['bmsMaster.soc'] ?? null),
+          borderColor: '#3fb950', borderWidth: 1.5, pointRadius: 0, fill: false }
+      ]};
+    } else {
+      chartSoc.data = { labels, datasets: [
+        { label: 'Combined %', data: points.map(p => p['backupBatPer'] ?? null),
+          borderColor: '#3fb950', borderWidth: 1.5, pointRadius: 0, fill: false }
+      ]};
+    }
+    chartSoc.update();
+
+    // Power chart
+    if (dtype.includes('delta')) {
+      chartPower.data = { labels, datasets: [
+        { label: 'Total In', data: points.map(p => p['pd.wattsInSum'] ?? null),
+          borderColor: '#3fb950', borderWidth: 1.5, pointRadius: 0 },
+        { label: 'Total Out', data: points.map(p => p['pd.wattsOutSum'] ?? null),
+          borderColor: '#f85149', borderWidth: 1.5, pointRadius: 0 },
+        { label: 'Solar', data: points.map(p => p['mppt.inWatts'] ?? null),
+          borderColor: '#d29922', borderWidth: 1.5, pointRadius: 0 },
+      ]};
+    } else {
+      // SHP: show total circuit load
+      chartPower.data = { labels, datasets: [
+        { label: 'Total Load', data: points.map(p => {
+            let sum = 0; for(let i=0;i<12;i++) sum += (p[`infoList.${i}.chWatt`]||0); return sum;
+          }), borderColor: '#f85149', borderWidth: 1.5, pointRadius: 0 },
+      ]};
+    }
+    chartPower.update();
+
+    // Circuits chart (SHP only, or skip for Delta)
+    if (dtype.includes('panel')) {
+      const ds = [];
+      for (let i = 0; i < 12; i++) {
+        const vals = points.map(p => p[`infoList.${i}.chWatt`] ?? 0);
+        if (vals.some(v => v > 0)) {
+          ds.push({ label: `#${i+1}`, data: vals, borderColor: COLORS[i%COLORS.length],
+                    borderWidth: 1, pointRadius: 0 });
+        }
+      }
+      chartCircuits.data = { labels, datasets: ds };
+    } else {
+      chartCircuits.data = { labels: [], datasets: [] };
+    }
+    chartCircuits.update();
+  } catch(e) { console.error('chart error', e); }
+}
+
+async function loadHistory() {
+  if (!chartSn) return;
+  const hours = document.getElementById('hist-hours').value;
+  try {
+    const r = await fetch(`/api/history?sn=${chartSn}&hours=${hours}`);
+    const points = await r.json();
+    if (!points.length || points.error) return;
+
+    const labels = points.map(p => p.ts?.slice(5,16) || '');
+    const dtype = allDevicesList[chartSn]?.type || '';
+
+    // SOC
+    const socKey = dtype.includes('delta') ? 'ems.lcdShowSoc' : 'backupBatPer';
+    const socAlts = dtype.includes('delta') ? ['bmsMaster.soc','bmsMaster.f32ShowSoc'] : [];
+    chartSoc.data = { labels, datasets: [
+      { label: 'SOC %', data: points.map(p => p[socKey] ?? p[socAlts[0]] ?? null),
+        borderColor: '#3fb950', borderWidth: 1.5, pointRadius: 0, fill: false }
+    ]};
+    chartSoc.update();
+
+    // Power
+    if (dtype.includes('delta')) {
+      chartPower.data = { labels, datasets: [
+        { label: 'Total In', data: points.map(p => p['pd.wattsInSum'] ?? null),
+          borderColor: '#3fb950', borderWidth: 1.5, pointRadius: 0 },
+        { label: 'Total Out', data: points.map(p => p['pd.wattsOutSum'] ?? null),
+          borderColor: '#f85149', borderWidth: 1.5, pointRadius: 0 },
+        { label: 'Solar', data: points.map(p => p['mppt.inWatts'] ?? null),
+          borderColor: '#d29922', borderWidth: 1.5, pointRadius: 0 },
+      ]};
+    } else {
+      const ds = [];
+      for (let i = 0; i < 12; i++) {
+        const k = `infoList.${i}.chWatt`;
+        const vals = points.map(p => p[k] ?? null);
+        if (vals.some(v => v !== null && v > 0)) {
+          ds.push({ label: `#${i+1}`, data: vals, borderColor: COLORS[i%COLORS.length],
+                    borderWidth: 1, pointRadius: 0 });
+        }
+      }
+      chartCircuits.data = { labels, datasets: ds };
+      chartCircuits.update();
+
+      // Total load for power chart
+      chartPower.data = { labels, datasets: [
+        { label: 'Total Load', data: points.map(p => {
+            let s=0; for(let i=0;i<12;i++) s+=(p[`infoList.${i}.chWatt`]||0); return s||null;
+          }), borderColor: '#f85149', borderWidth: 1.5, pointRadius: 0 },
+      ]};
+    }
+    chartPower.update();
+  } catch(e) { console.error('history error', e); }
+}
+
+// Init charts after Chart.js loads
+setTimeout(() => {
+  initCharts();
+  setInterval(() => { if (chartMode === 'live') updateLiveCharts(); }, 3000);
+}, 500);
 </script>
 </body>
 </html>"""

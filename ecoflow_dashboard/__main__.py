@@ -141,7 +141,7 @@ def main() -> None:
         from .web import run_web
         console.print(f"Starting web dashboard v{__version__} on http://0.0.0.0:{args.web_port}")
         try:
-            run_web(mqtt_client, device_types, device_names, port=args.web_port)
+            run_web(mqtt_client, device_types, device_names, port=args.web_port, db_path=args.db)
         except KeyboardInterrupt:
             pass
         finally:
