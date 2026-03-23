@@ -17,45 +17,47 @@ Monitor battery status, power consumption, and control your EcoFlow devices from
 ## Preview
 
 ```
-EcoFlow Dashboard  MQTT Connected  2026-03-23 22:12:16
+EcoFlow Dashboard   MQTT Connected   2026-03-23 22:12:16
 
- Delta Pro (DCEBZ8ZEBXXXXXX) 79%                Delta Pro (DCEBZ8ZEBXXXXXX) 47%
-+-----------------------------------------------+-----------------------------------------------+
-| ################################------------- | ##################--------------------------- |
-|                                               |                                               |
-| Solar In          0 W  AC In            0 W   | Solar In          0 W  AC In            0 W   |
-| AC Out      75 W (230V 50Hz)  12V/Car   0 W   | AC Out            0 W  12V/Car         14 W   |
-| Total In          0 W  Total Out  75 W (61%)  | Total In          0 W  Total Out        0 W   |
-|                                               |                                               |
-| Discharge     1d 0h   Voltage        49.7 V   | Idle Time           --  Voltage        49.6 V  |
-| Current       -2.1 A  DC Bus         123 W    | Current         -0.1 A  DC Bus          14 W   |
-| Cell V   3.27-3.32V  D55mV   Cell T  26-28C  | Cell V   3.29-3.30V  D6mV    Cell T  25-26C  |
-| Batt/Inv    27/78 C   MPPT/MOS    66/27 C    | Batt/Inv    26/29 C   MPPT/MOS    31/27 C    |
-| Cycles           569  Limits      10% - 100%  | Cycles           655  Limits      10% - 100%  |
-| Fan    Inv ON (Auto)  Beep               OFF  | Fan       Off (Auto)  Beep               OFF  |
-|                                               |                                               |
-| Lifetime Energy                               | Lifetime Energy                               |
-| AC Charged   1918 kWh  Solar Charged  925 kWh | AC Charged   2589 kWh  Solar Charged  426 kWh |
-| AC Dischg    2189 kWh  DC Discharged   13 kWh | AC Dischg    2254 kWh  DC Discharged    6 kWh |
-|  Health: 94% (Excellent)  2.9 / 3.7 kWh      |  Health: 93% (Excellent)  1.7 / 3.7 kWh      |
-+-----------------------------------------------+-----------------------------------------------+
+  Delta Pro (DCEBZ8ZEBXXXXXX)  79%         Delta Pro (DCEBZ8ZEBXXXXXX)  47%
++---------------------------------------------+---------------------------------------------+
+| ####################################------- | ###################------------------------ |
+|                                             |                                             |
+| Solar In         0 W   AC In          0 W   | Solar In         0 W   AC In          0 W   |
+| AC Out     75 W (230V 50Hz)  12V/Car  0 W   | AC Out           0 W   12V/Car       14 W   |
+| Total In         0 W   Total Out 75 W (61%) | Total In         0 W   Total Out       0 W   |
+|                                             |                                             |
+| Discharge    1d 0h    Voltage       49.7 V  | Idle Time          --   Voltage       49.6 V |
+| Current      -2.1 A   DC Bus        123 W  | Current        -0.1 A   DC Bus         14 W  |
+| Cell V  3.27-3.32V D55mV  Cell T  26-28C   | Cell V  3.29-3.30V D6mV   Cell T  25-26C    |
+| Batt/Inv   27/78C   MPPT/MOS   66/27C      | Batt/Inv   26/29C   MPPT/MOS   31/27C       |
+| Cycles          569   Limits     10% - 100% | Cycles          655   Limits     10% - 100%  |
+| Fan   Inv ON (Auto)   Beep             OFF  | Fan      Off (Auto)   Beep             OFF   |
+|                                             |                                             |
+| Lifetime Energy                             | Lifetime Energy                             |
+| AC Charged  1918 kWh  Solar Charged 925 kWh | AC Charged  2589 kWh  Solar Charged 426 kWh |
+| AC Dischg   2189 kWh  DC Discharged  13 kWh | AC Dischg   2254 kWh  DC Discharged   6 kWh |
+|  Health: 94% (Excellent) 2.9 / 3.7 kWh     |  Health: 93% (Excellent) 1.7 / 3.7 kWh     |
++---------------------------------------------+---------------------------------------------+
 
-+------------------------------- Smart Home Panel (SP10ZEWXXXXXX) ----------+
-| Grid       ON (230V 50Hz)  Grid Today  15 kWh   Backup Today      0 Wh  |
-| Combined     47%  3.80 kWh  Limits     0%-100%   Sched Chg        OFF   |
-|                                                                          |
-| Batt 1: 47% 26C  Standby  3.80 kWh / 3.6 kW  Chg:4d 20h               |
-| Batt 2: Not connected                                                    |
-|                                                                          |
-|  #  Name      Power    A   M  P  |  #  Name      Power    A   M  P     |
-|  1             68 W   --  A  -  |  7             15 W   --  A  6       |
-|  2            630 W   --  A  1  |  8             36 W   --  A  7       |
-|  3              0 W   --  A  2  |  9             48 W   --  A  8       |
-|  4              0 W   --  A  3  | 10              0 W   --  A  9       |
-|  5              0 W   --  A  4  | 11              0 W   --  A  -       |
-|  6             10 W   --  A  5  | 12              0 W   --  A  -       |
-|                                              809 W | Up: 19h 24m         |
-+--------------------------------------------------------------------------+
++--------------------------- Smart Home Panel (SP10ZEWXXXXXX) ---------------------------+
+| Grid      ON (230V 50Hz)   Grid Today   15.07 kWh   Backup Today             0 Wh     |
+| Combined    47%  3.80 kWh   Limits       0%-100%     Sched Chg              OFF        |
+|                                                                                        |
+| Batt 1: 47% 26C  Standby  3.80 kWh / 3.6 kW   Chg: 4d 20h                           |
+| Batt 2: Not connected                                                                  |
+|                                                                                        |
+|                                    Circuits                                            |
+|   #  Name       Power   Mode  Priority   |   #  Name       Power   Mode  Priority     |
+|   1               69 W  Auto     -       |   7              17 W   Auto     6          |
+|   2              603 W  Auto     1       |   8              42 W   Auto     7          |
+|   3               10 W  Auto     2       |   9              46 W   Auto     8          |
+|   4                0 W  Auto     3       |  10               0 W   Auto     9          |
+|   5                0 W  Auto     4       |  11  DP.0352   481 W   Auto     -          |
+|   6               11 W  Auto     5       |  12  DP.0801     0 W   Auto     -          |
+|                                                         94% charging efficiency        |
+|                                                  1.3 kW | Up: 20h 37m                 |
++----------------------------------------------------------------------------------------+
   [a] AC  [d] DC  [x] XBoost  [b] Beep  [c] Charging  [+/-] Chg%  [w/s] ChgW  [1-3] Device
 ```
 

@@ -609,17 +609,17 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
         total_load += w
 
     # 2-column circuit table: left=circuits 1-6, right=circuits 7-12
-    ct = Table(show_header=True, show_edge=False, pad_edge=False, title="Circuits")
-    ct.add_column("#", style="dim", width=2)
-    ct.add_column("Name", width=8)
-    ct.add_column("Power", justify="right", width=7)
-    ct.add_column("Mode", width=4)
+    ct = Table(show_header=True, show_edge=False, pad_edge=True, title="Circuits", padding=(0, 1))
+    ct.add_column("#", style="dim", width=3, justify="right")
+    ct.add_column("Name", width=9)
+    ct.add_column("Power", justify="right", width=8)
+    ct.add_column("Mode", width=5)
     ct.add_column("Priority", justify="center", width=8)
-    ct.add_column("│", style="dim", width=1)
-    ct.add_column("#", style="dim", width=2)
-    ct.add_column("Name", width=8)
-    ct.add_column("Power", justify="right", width=7)
-    ct.add_column("Mode", width=4)
+    ct.add_column("  │", style="dim", width=3)
+    ct.add_column("#", style="dim", width=3, justify="right")
+    ct.add_column("Name", width=9)
+    ct.add_column("Power", justify="right", width=8)
+    ct.add_column("Mode", width=5)
     ct.add_column("Priority", justify="center", width=8)
 
     for row_idx in range(6):
