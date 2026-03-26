@@ -158,6 +158,18 @@ def main() -> None:
         alerter.start()
         console.print("[dim]Telegram alerts enabled[/]")
 
+    # Start solar forecast (before bot so bot can reference it)
+    solar_forecast = None
+    if config.latitude and config.longitude:
+        from .solar_forecast import SolarForecast
+        solar_forecast = SolarForecast(
+            config.latitude, config.longitude,
+            panel_watts_peak=config.solar_peak_watts,
+            alert_callback=alerter._send if alerter else None,
+        )
+        solar_forecast.start()
+        console.print(f"[dim]Solar forecast enabled ({config.latitude}, {config.longitude})[/]")
+
     # Start Telegram bot (command handler)
     tg_bot = None
     if config.telegram_token and config.telegram_chat_id:
@@ -186,18 +198,6 @@ def main() -> None:
         local_client = LocalApiClient(local_devs)
         local_client.start()
         console.print(f"[dim]Local API: {len(local_devs)} device(s) on LAN[/]")
-
-    # Start solar forecast
-    solar_forecast = None
-    if config.latitude and config.longitude:
-        from .solar_forecast import SolarForecast
-        solar_forecast = SolarForecast(
-            config.latitude, config.longitude,
-            panel_watts_peak=config.solar_peak_watts,
-            alert_callback=alerter._send if alerter else None,
-        )
-        solar_forecast.start()
-        console.print(f"[dim]Solar forecast enabled ({config.latitude}, {config.longitude})[/]")
 
     # Start charge scheduler
     scheduler = None
