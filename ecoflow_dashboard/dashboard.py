@@ -143,10 +143,11 @@ def _build_delta_pro_panel(sn: str, data: dict, name: str, device_type: str = DE
     soh_c = _soh_color(soh)
     soh_lbl = _soh_label(soh)
 
-    # Title with device type + SOC prominently displayed
+    # Title with device type + SOC + solar icon
+    sun_icon = " [yellow]☀[/]" if _get(data, "mppt.inWatts") > 0 else ""
     panel_title = (
         f"[bold]{type_label}[/bold] [white]({sn})[/white]"
-        f"  [{color} bold]{int(soc)}%[/]"
+        f"  [{color} bold]{int(soc)}%[/]{sun_icon}"
     )
     # Subtitle with health and capacity
     panel_subtitle = (
@@ -321,6 +322,8 @@ def _build_delta_pro_panel(sn: str, data: dict, name: str, device_type: str = DE
     batt_amp = _get(data, "bmsMaster.amp")
     if abs(batt_amp) > 100:
         batt_amp /= 1000  # mA → A
+    # Clamp to realistic range (Delta Pro max ~30A)
+    batt_amp = max(-35, min(35, batt_amp))
     min_cell_v = _get(data, "bmsMaster.minCellVol")
     max_cell_v = _get(data, "bmsMaster.maxCellVol")
     if min_cell_v > 100:

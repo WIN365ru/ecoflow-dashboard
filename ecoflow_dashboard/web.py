@@ -446,7 +446,8 @@ function buildDeltaPro(sn, name, d) {
   const car = g(d,'pd.carWatts');
   const volts = g(d,'bmsMaster.vol')/1000;
   const amps = g(d,'bmsMaster.amp');
-  const current = Math.abs(amps) > 100 ? amps/1000 : amps;
+  let current = Math.abs(amps) > 100 ? amps/1000 : amps;
+  current = Math.max(-35, Math.min(35, current)); // clamp to realistic range
   const cycles = Math.round(g(d,'bmsMaster.cycles'));
   const chg = g(d,'ems.chgRemainTime');
   const dsg = g(d,'ems.dsgRemainTime');
@@ -500,7 +501,7 @@ function buildDeltaPro(sn, name, d) {
   const hasSolar = solarIn > 0 || pvVol > 1 || chgSun > 0;
 
   return `<div class="card">
-    <div class="card-title">Delta Pro <span style="color:var(--dim);font-size:11px">(${sn.slice(-6)})</span></div>
+    <div class="card-title">Delta Pro <span style="color:var(--dim);font-size:11px">(${sn.slice(-6)})</span>${solarIn>0?' <span style="color:var(--yellow)">☀</span>':''}</div>
     <div class="soc soc-${c}">${Math.round(soc)}%</div>
     <div class="bar-bg"><div class="bar-fill bar-${c}" style="width:${Math.min(100,Math.max(0,soc))}%"></div></div>
     <div class="health health-${sohC}">Health: ${Math.round(soh)}% (${sohLabel}) &nbsp; ${remainWh>0?remainWh.toFixed(1)+' / '+fullWh.toFixed(1)+' kWh':''}</div>
