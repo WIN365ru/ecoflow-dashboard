@@ -22,6 +22,7 @@ DEFAULTS = {
     "ALERT_HIGH_TEMP": "45",         # °C threshold
     "ALERT_OFFLINE_TIMEOUT": "300",  # seconds
     "ALERT_COOLDOWN": "1800",        # 30 min between repeated alerts
+    "ALERT_DAILY_SUMMARY": "20",     # Hour (0-23) to send daily summary, empty to disable
 }
 
 
@@ -64,6 +65,10 @@ class AlertManager:
         # Track last data timestamp per device
         self._last_data_ts: dict[str, float] = {}
 
+        # Daily summary
+        self._summary_hour = os.environ.get("ALERT_DAILY_SUMMARY", DEFAULTS["ALERT_DAILY_SUMMARY"])
+        self._last_summary_date: str = ""
+
     def start(self) -> None:
         # Send startup notification
         self._send("🟢 *EcoFlow Dashboard Started*\nAlerts are active.")
@@ -83,6 +88,7 @@ class AlertManager:
         while not self._stop.is_set():
             try:
                 self._check_all()
+                self._check_daily_summary()
             except Exception:
                 log.exception("Alert check failed")
             self._stop.wait(10)
@@ -211,6 +217,76 @@ class AlertManager:
                         self._send(
                             f"🌡️ *HIGH TEMPERATURE*\n{label}\n{name}: {t:.0f}°C (threshold: {self._high_temp}°C)"
                         )
+
+    def _check_daily_summary(self) -> None:
+        """Send daily summary at configured hour."""
+        if not self._summary_hour:
+            return
+        now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
+        if today == self._last_summary_date:
+            return
+        if now.hour != int(self._summary_hour):
+            return
+
+        self._last_summary_date = today
+        self._send(self._build_summary())
+
+    def _build_summary(self) -> str:
+        """Build a daily summary message with all device stats."""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        lines = [f"📊 *Daily Summary* — {now}\n"]
+
+        for sn, dtype in self._device_types.items():
+            data = self._mqtt.get_device_data(sn)
+            if not data:
+                continue
+            label = self._device_label(sn)
+
+            if "delta" in dtype:
+                soc = self._get_float(data, "ems.lcdShowSoc", "bmsMaster.f32ShowSoc", "bmsMaster.soc")
+                soh = self._get_float(data, "bmsMaster.soh")
+                volts = self._get_float(data, "bmsMaster.vol") / 1000
+                cycles = int(self._get_float(data, "bmsMaster.cycles"))
+                total_in = self._get_float(data, "pd.wattsInSum")
+                total_out = self._get_float(data, "pd.wattsOutSum")
+                temp = self._get_float(data, "bmsMaster.temp")
+                chg_ac = self._get_float(data, "pd.chgPowerAc") / 1000
+                chg_sun = self._get_float(data, "pd.chgSunPower") / 1000
+
+                status = "⚡ Charging" if total_in > total_out else "🔋 Discharging" if total_out > 0 else "💤 Idle"
+
+                lines.append(f"*{label}*")
+                lines.append(f"  {status} — SOC: *{soc:.0f}%* — Health: {soh:.0f}%")
+                lines.append(f"  {volts:.1f}V | {temp:.0f}°C | {cycles} cycles")
+                lines.append(f"  In: {total_in:.0f}W | Out: {total_out:.0f}W")
+                lines.append(f"  Lifetime: AC {chg_ac:.0f} kWh | Solar {chg_sun:.0f} kWh")
+                lines.append("")
+
+            elif "panel" in dtype:
+                grid = self._get_float(data, "gridSta", "heartbeat.gridSta")
+                grid_day = self._get_float(data, "gridDayWatth", "heartbeat.gridDayWatth")
+                backup_day = self._get_float(data, "backupDayWatth", "heartbeat.backupDayWatth")
+                combined = self._get_float(data, "backupBatPer", "heartbeat.backupBatPer")
+                total_load = sum(
+                    self._get_float(data, f"infoList.{i}.chWatt")
+                    for i in range(12)
+                )
+
+                lines.append(f"*{label}*")
+                lines.append(f"  Grid: {'✅ ON' if grid else '❌ OFF'} — Combined: *{combined:.0f}%*")
+                lines.append(f"  Grid today: {grid_day/1000:.2f} kWh | Backup: {backup_day/1000:.2f} kWh")
+                lines.append(f"  Current load: {total_load:.0f} W")
+
+                for i in range(2):
+                    conn = self._get_float(data, f"energyInfos.{i}.stateBean.isConnect")
+                    if conn:
+                        bsoc = self._get_float(data, f"energyInfos.{i}.batteryPercentage")
+                        btemp = self._get_float(data, f"energyInfos.{i}.emsBatTemp")
+                        lines.append(f"  Batt {i+1}: {bsoc:.0f}% | {btemp:.0f}°C")
+                lines.append("")
+
+        return "\n".join(lines)
 
     @staticmethod
     def _get_float(data: dict, *keys: str) -> float:
