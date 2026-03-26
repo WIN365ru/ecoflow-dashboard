@@ -85,13 +85,44 @@ class AlertManager:
         self._monthly_enabled = _env_bool("ALERT_MONTHLY_REPORT")
         self._last_monthly_date: str = ""
 
+        # Discharge milestone tracking: {sn: last_notified_milestone}
+        # Above 20%: notify every 20% (80, 60, 40, 20)
+        # Below 20%: notify every 5% (15, 10, 5)
+        self._discharge_milestones: dict[str, int] = {}
+
     def start(self) -> None:
-        # Send startup notification with device summary
+        # Send startup notification with device summary and current status
         from . import __version__
+
+        # Wait briefly for MQTT data to arrive
+        _time_module = __import__('time')
+        _time_module.sleep(5)
+
         dev_list = []
         for sn, dtype in self._device_types.items():
             label = self._device_label(sn)
-            dev_list.append(f"  • {label}")
+            data = self._mqtt.get_device_data(sn)
+            if "delta" in dtype:
+                soc = self._get_float(data, "ems.lcdShowSoc", "bmsMaster.f32ShowSoc", "bmsMaster.soc")
+                chg = self._get_float(data, "ems.chgRemainTime")
+                dsg = self._get_float(data, "ems.dsgRemainTime")
+                total_in = self._get_float(data, "pd.wattsInSum")
+                total_out = self._get_float(data, "pd.wattsOutSum")
+                if total_in > total_out and total_in > 0:
+                    time_str = f"⚡Chg {self._fmt_time(chg)}" if chg > 0 else ""
+                elif total_out > 0:
+                    time_str = f"🔋Dsg {self._fmt_time(dsg)}" if dsg > 0 else ""
+                else:
+                    time_str = "💤Idle"
+                dev_list.append(f"  • {label}: *{soc:.0f}%* {time_str}")
+            elif "panel" in dtype:
+                combined = self._get_float(data, "backupBatPer", "heartbeat.backupBatPer")
+                grid = self._get_float(data, "gridSta", "heartbeat.gridSta")
+                grid_str = "Grid ✅" if grid else "Grid ❌"
+                dev_list.append(f"  • {label}: *{combined:.0f}%* {grid_str}")
+            else:
+                dev_list.append(f"  • {label}")
+
         devices_str = "\n".join(dev_list) if dev_list else "  No devices"
         self._send(
             f"🟢 *EcoFlow Dashboard v{__version__}*\n"
@@ -232,11 +263,26 @@ class AlertManager:
         soc = self._get_float(data, "ems.lcdShowSoc", "bmsMaster.f32ShowSoc", "bmsMaster.soc")
         prev_soc = self._get_float(prev, "ems.lcdShowSoc", "bmsMaster.f32ShowSoc", "bmsMaster.soc")
 
-        # ── Battery low ──
-        if self._battery_low > 0 and soc < self._battery_low:
-            if prev_soc >= self._battery_low or not prev:
-                if self._can_alert(f"batt_low:{sn}"):
-                    self._send(f"🪫 *BATTERY LOW*\n{label}\nSOC: {soc:.0f}%")
+        # ── Discharge milestones ──
+        total_in = self._get_float(data, "pd.wattsInSum")
+        total_out = self._get_float(data, "pd.wattsOutSum")
+        dsg_time = self._get_float(data, "ems.dsgRemainTime")
+        chg_time = self._get_float(data, "ems.chgRemainTime")
+        is_discharging = total_out > total_in and total_out > 0
+
+        if is_discharging:
+            milestone = self._get_discharge_milestone(sn, soc)
+            if milestone is not None:
+                time_str = f"\nRemaining: {self._fmt_time(dsg_time)}" if dsg_time > 0 else ""
+                emoji = "🪫" if milestone <= 10 else "🔋"
+                self._send(
+                    f"{emoji} *BATTERY {int(soc)}%*\n{label}"
+                    f"\nDischarging at {total_out:.0f}W{time_str}"
+                )
+        else:
+            # Reset milestones when not discharging
+            if sn in self._discharge_milestones and self._discharge_milestones[sn] < 100:
+                self._discharge_milestones[sn] = 100
 
         # ── Battery full ──
         if _env_bool("ALERT_BATTERY_FULL") and soc >= 100 and prev_soc < 100 and prev:
@@ -434,6 +480,46 @@ class AlertManager:
                 lines.append("")
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _fmt_time(minutes: float) -> str:
+        m = int(minutes)
+        if m <= 0:
+            return "--"
+        if m >= 1440:
+            return f"{m // 1440}d {(m % 1440) // 60}h"
+        if m >= 60:
+            return f"{m // 60}h {m % 60}m"
+        return f"{m}m"
+
+    def _get_discharge_milestone(self, sn: str, soc: float) -> int | None:
+        """Return SOC milestone if crossed, else None.
+        Above 20%: milestones at 80, 60, 40, 20
+        Below 20%: milestones at 15, 10, 5
+        """
+        if soc >= 20:
+            milestones = [80, 60, 40, 20]
+        else:
+            milestones = [15, 10, 5]
+
+        current_milestone = None
+        for m in milestones:
+            if soc <= m:
+                current_milestone = m
+
+        if current_milestone is None:
+            return None
+
+        last = self._discharge_milestones.get(sn, 100)
+        if current_milestone < last:
+            self._discharge_milestones[sn] = current_milestone
+            return current_milestone
+
+        # SOC went back up (charging) — reset tracking
+        if soc > last + 5:
+            self._discharge_milestones[sn] = 100
+
+        return None
 
     @staticmethod
     def _get_float(data: dict, *keys: str) -> float:
