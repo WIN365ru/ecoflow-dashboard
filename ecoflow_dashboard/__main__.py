@@ -157,6 +157,24 @@ def main() -> None:
         alerter.start()
         console.print("[dim]Telegram alerts enabled[/]")
 
+    # Start Telegram bot (command handler)
+    tg_bot = None
+    if config.telegram_token and config.telegram_chat_id:
+        from .telegram_bot import TelegramBot
+        tg_bot = TelegramBot(
+            config.telegram_token, config.telegram_chat_id,
+            mqtt_client, device_types, device_names,
+            energy_rate=config.energy_rate,
+            energy_rate_night=config.energy_rate_night,
+            energy_day_start=config.energy_day_start,
+            energy_day_end=config.energy_day_end,
+            energy_currency=config.energy_currency,
+            circuit_names=config.circuit_names,
+            db_path=args.db,
+        )
+        tg_bot.start()
+        console.print("[dim]Telegram bot commands enabled[/]")
+
     # Start charge scheduler
     scheduler = None
     from .scheduler import ChargeScheduler
@@ -190,6 +208,8 @@ def main() -> None:
         finally:
             if scheduler:
                 scheduler.stop()
+            if tg_bot:
+                tg_bot.stop()
             if alerter:
                 alerter.stop()
             if data_logger:
@@ -211,6 +231,8 @@ def main() -> None:
         except KeyboardInterrupt:
             pass
         finally:
+            if tg_bot:
+                tg_bot.stop()
             if scheduler:
                 scheduler.stop()
             if alerter:
