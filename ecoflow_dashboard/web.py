@@ -1101,7 +1101,8 @@ async function updateLiveCharts() {
       for (let i = 0; i < 12; i++) {
         const vals = points.map(p => p[`infoList.${i}.chWatt`] ?? 0);
         if (vals.some(v => v > 0)) {
-          ds.push({ label: `#${i+1}`, data: vals, borderColor: COLORS[i%COLORS.length],
+          const cLabel = window.circuitNames && window.circuitNames[i] ? window.circuitNames[i] : `#${i+1}`;
+          ds.push({ label: cLabel, data: vals, borderColor: COLORS[i%COLORS.length],
                     borderWidth: 1, pointRadius: 0 });
         }
       }
@@ -1182,7 +1183,8 @@ async function loadHistory() {
         const k = `infoList.${i}.chWatt`;
         const vals = points.map(p => p[k] ?? null);
         if (vals.some(v => v !== null && v > 0)) {
-          ds.push({ label: `#${i+1}`, data: vals, borderColor: COLORS[i%COLORS.length],
+          const cLabel = window.circuitNames && window.circuitNames[i] ? window.circuitNames[i] : `#${i+1}`;
+          ds.push({ label: cLabel, data: vals, borderColor: COLORS[i%COLORS.length],
                     borderWidth: 1, pointRadius: 0 });
         }
       }
