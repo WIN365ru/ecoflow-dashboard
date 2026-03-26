@@ -93,9 +93,26 @@ def main() -> None:
         console.print("[red]No matching devices to monitor.[/]")
         raise SystemExit(1)
 
-    # Fetch MQTT credentials
-    with console.status("Authenticating & fetching MQTT credentials..."):
-        mqtt_creds = fetch_mqtt_credentials(config)
+    # Fetch MQTT credentials (retry on network errors)
+    import time as _t
+    mqtt_creds = None
+    for attempt in range(1, 6):
+        try:
+            with console.status(f"Authenticating & fetching MQTT credentials (attempt {attempt}/5)..."):
+                mqtt_creds = fetch_mqtt_credentials(config)
+            break
+        except Exception as e:
+            err = str(e)
+            if "resolve" in err.lower() or "timeout" in err.lower() or "connection" in err.lower():
+                console.print(f"[yellow]Network error (attempt {attempt}/5): {err[:80]}[/]")
+                if attempt < 5:
+                    console.print(f"[dim]Retrying in {attempt * 10}s...[/]")
+                    _t.sleep(attempt * 10)
+                else:
+                    console.print("[red]Failed to connect after 5 attempts. Check your internet connection.[/]")
+                    raise SystemExit(1)
+            else:
+                raise
 
     # Create MQTT client
     mqtt_client = EcoFlowMqttClient(mqtt_creds, list(device_types.keys()), config.auth_mode)
