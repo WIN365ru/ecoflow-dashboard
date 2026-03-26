@@ -167,14 +167,9 @@ def _build_delta_pro_panel(sn: str, data: dict, name: str, device_type: str = DE
     total_in = _get(data, "pd.wattsInSum")
     total_out = _get(data, "pd.wattsOutSum")
 
-    # Solar details
-    solar_vol = _get(data, "mppt.inVol")
-    solar_amp = _get(data, "mppt.inAmp")
-    # Auto-detect mV vs V: if >500, it's likely mV
-    if solar_vol > 500:
-        solar_vol /= 1000
-    if solar_amp > 100:
-        solar_amp /= 1000
+    # Solar details (raw values are decivolts / deciamps → ÷10)
+    solar_vol = _get(data, "mppt.inVol") / 10
+    solar_amp = _get(data, "mppt.inAmp") / 10
 
     # AC details
     ac_in_vol = _get(data, "inv.acInVol") / 1000 if _get(data, "inv.acInVol") > 100 else _get(data, "inv.acInVol")
@@ -255,19 +250,11 @@ def _build_delta_pro_panel(sn: str, data: dict, name: str, device_type: str = DE
     mppt_used_time = _get(data, "pd.mpptUsedTime")
     solar_lifetime = _get(data, "pd.chgSunPower")
 
-    # Normalize units: decivolts → V, deciamps → A
-    if mppt_in_vol > 500:
-        mppt_in_vol /= 100
-    elif mppt_in_vol > 5:
-        mppt_in_vol /= 10
-    if mppt_in_amp > 500:
-        mppt_in_amp /= 100
-    elif mppt_in_amp > 50:
-        mppt_in_amp /= 10
-    if mppt_out_vol > 500:
-        mppt_out_vol /= 10
-    if mppt_out_amp > 500:
-        mppt_out_amp /= 10
+    # All MPPT values are in decivolts / deciamps (raw ÷ 10)
+    mppt_in_vol /= 10
+    mppt_in_amp /= 10
+    mppt_out_vol /= 10
+    mppt_out_amp /= 10
 
     # Only show solar section if there's meaningful data
     has_solar = solar_in > 0 or mppt_in_vol > 1 or solar_lifetime > 0

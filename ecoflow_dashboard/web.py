@@ -487,11 +487,11 @@ function buildDeltaPro(sn, name, d) {
   const invFw = d['inv.sysVer'] || ''; const mpptFw = d['mppt.swVer'] || '';
   const acFreq = g(d,'inv.cfgAcOutFreq') ? '50Hz' : '60Hz';
   const acVolt = g(d,'inv.cfgAcOutVoltage') / 1000;
-  // Solar / MPPT
-  let pvVol = g(d,'mppt.inVol'); pvVol = pvVol > 500 ? pvVol/100 : pvVol > 5 ? pvVol/10 : pvVol;
-  let pvAmp = g(d,'mppt.inAmp'); pvAmp = pvAmp > 500 ? pvAmp/100 : pvAmp > 50 ? pvAmp/10 : pvAmp;
-  let mpptOutV = g(d,'mppt.outVol'); mpptOutV = mpptOutV > 500 ? mpptOutV/10 : mpptOutV;
-  let mpptOutA = g(d,'mppt.outAmp'); mpptOutA = mpptOutA > 500 ? mpptOutA/10 : mpptOutA;
+  // Solar / MPPT — all values in decivolts/deciamps (÷10)
+  const pvVol = g(d,'mppt.inVol') / 10;
+  const pvAmp = g(d,'mppt.inAmp') / 10;
+  const mpptOutV = g(d,'mppt.outVol') / 10;
+  const mpptOutA = g(d,'mppt.outAmp') / 10;
   const chgTypes = {0:'Off',1:'Solar',2:'AC',3:'AC+Solar'};
   const mpptChgType = chgTypes[g(d,'mppt.chgType')] || '--';
   const mpptFault = g(d,'mppt.faultCode');
