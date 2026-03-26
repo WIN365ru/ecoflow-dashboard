@@ -507,7 +507,9 @@ def _mah_to_wh(mah: float) -> float:
 
 def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HOME_PANEL,
                      dp_data: list[tuple[str, dict]] | None = None,
-                     energy_rate: float = 0.0, energy_currency: str = "$",
+                     energy_rate: float = 0.0, energy_rate_night: float = 0.0,
+                     energy_day_start: int = 7, energy_day_end: int = 23,
+                     energy_currency: str = "$",
                      circuit_names: list[str] | None = None) -> Panel:
     type_label = DEVICE_TYPE_LABELS.get(device_type, device_type)
 
@@ -535,13 +537,31 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
     info.add_column(min_width=14)
     info.add_column(min_width=10, justify="right")
     cost_txt = ""
+    cur_rate_txt = ""
     if energy_rate > 0 and grid_day_wh > 0:
-        daily_cost = (grid_day_wh / 1000) * energy_rate
+        # Estimate daily cost — use weighted average if TOU
+        if energy_rate_night > 0:
+            day_hrs = (energy_day_end - energy_day_start) % 24
+            night_hrs = 24 - day_hrs
+            avg_rate = (energy_rate * day_hrs + energy_rate_night * night_hrs) / 24
+        else:
+            avg_rate = energy_rate
+        daily_cost = (grid_day_wh / 1000) * avg_rate
         cost_txt = f" ([green]{energy_currency}{daily_cost:.2f}[/])"
+    if energy_rate > 0:
+        now_hour = datetime.now().hour
+        if energy_rate_night > 0:
+            if energy_day_start <= energy_day_end:
+                is_day = energy_day_start <= now_hour < energy_day_end
+            else:
+                is_day = now_hour >= energy_day_start or now_hour < energy_day_end
+            now_rate = energy_rate if is_day else energy_rate_night
+            rate_label = "Day" if is_day else "Night"
+            cur_rate_txt = f" [dim]({rate_label}: {energy_currency}{now_rate})[/]"
     info.add_row(
         Text("Grid", style="dim"),
         Text.from_markup(f"{'[bold green]ON[/]' if grid_sta else '[bold red]OFF[/]'}{grid_v}{eps_txt}{chk_txt}"),
-        Text("Grid Today", style="dim"), Text.from_markup(f"[bold]{_fmt_wh(grid_day_wh)}[/]{cost_txt}"),
+        Text("Grid Today", style="dim"), Text.from_markup(f"[bold]{_fmt_wh(grid_day_wh)}[/]{cost_txt}{cur_rate_txt}"),
         Text("Backup Today", style="dim"), Text(_fmt_wh(backup_day_wh), style="bold"),
     )
 
@@ -827,6 +847,9 @@ def build_dashboard(
     update_msg: str = "",
     alerter: object | None = None,
     energy_rate: float = 0.0,
+    energy_rate_night: float = 0.0,
+    energy_day_start: int = 7,
+    energy_day_end: int = 23,
     energy_currency: str = "$",
     circuit_names: list[str] | None = None,
 ) -> Group:
@@ -875,8 +898,9 @@ def build_dashboard(
             data = mqtt_client.get_device_data(sn)
             name = device_names.get(sn, sn)
             other_panels.append(_build_shp_panel(sn, data, name, dtype, dp_data=delta_pro_data,
-                                                energy_rate=energy_rate, energy_currency=energy_currency,
-                                                circuit_names=circuit_names))
+                                                energy_rate=energy_rate, energy_rate_night=energy_rate_night,
+                                                energy_day_start=energy_day_start, energy_day_end=energy_day_end,
+                                                energy_currency=energy_currency, circuit_names=circuit_names))
 
     # Place Delta Pros side by side if there are exactly 2
     if len(delta_panels) == 2:
@@ -908,6 +932,9 @@ def run_dashboard(
     version_checker: object | None = None,
     alerter: object | None = None,
     energy_rate: float = 0.0,
+    energy_rate_night: float = 0.0,
+    energy_day_start: int = 7,
+    energy_day_end: int = 23,
     energy_currency: str = "$",
     circuit_names: list[str] | None = None,
 ) -> None:
@@ -970,6 +997,9 @@ def run_dashboard(
                     update_msg=update_msg,
                     alerter=alerter,
                     energy_rate=energy_rate,
+                    energy_rate_night=energy_rate_night,
+                    energy_day_start=energy_day_start,
+                    energy_day_end=energy_day_end,
                     energy_currency=energy_currency,
                     circuit_names=circuit_names,
                 ))

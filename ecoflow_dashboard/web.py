@@ -49,7 +49,21 @@ _controller: DeviceController | None = None
 _db_path: str = ""
 _alerter: object | None = None
 _energy_rate: float = 0.0
+_energy_rate_night: float = 0.0
+_energy_day_start: int = 7
+_energy_day_end: int = 23
 _energy_currency: str = "$"
+
+
+def _get_current_rate() -> float:
+    if not _energy_rate_night:
+        return _energy_rate
+    h = datetime.now().hour
+    if _energy_day_start <= _energy_day_end:
+        is_day = _energy_day_start <= h < _energy_day_end
+    else:
+        is_day = h >= _energy_day_start or h < _energy_day_end
+    return _energy_rate if is_day else _energy_rate_night
 _circuit_names: list[str] | None = None
 
 # Live data ring buffer: {sn: deque of {ts, key: value, ...}}
@@ -114,7 +128,12 @@ def api_devices() -> Response:
                     "latest_version": _get_latest_version(),
                     "telegram": {"enabled": _alerter is not None,
                                  "connected": getattr(_alerter, "connected", False)} if _alerter else None,
-                    "energy": {"rate": _energy_rate, "currency": _energy_currency} if _energy_rate > 0 else None,
+                    "energy": {
+                        "rate": _energy_rate, "rate_night": _energy_rate_night,
+                        "day_start": _energy_day_start, "day_end": _energy_day_end,
+                        "currency": _energy_currency,
+                        "current_rate": _get_current_rate(),
+                    } if _energy_rate > 0 else None,
                     "circuit_names": _circuit_names,
                     "devices": result}),
         content_type="application/json",
@@ -480,10 +499,14 @@ def run_web(
     db_path: str = "",
     alerter: object | None = None,
     energy_rate: float = 0.0,
+    energy_rate_night: float = 0.0,
+    energy_day_start: int = 7,
+    energy_day_end: int = 23,
     energy_currency: str = "$",
     circuit_names: list[str] | None = None,
 ) -> None:
-    global _mqtt, _device_types, _device_names, _controller, _db_path, _alerter, _energy_rate, _energy_currency, _circuit_names
+    global _mqtt, _device_types, _device_names, _controller, _db_path, _alerter
+    global _energy_rate, _energy_rate_night, _energy_day_start, _energy_day_end, _energy_currency, _circuit_names
     _mqtt = mqtt_client
     _device_types = device_types
     _device_names = device_names
@@ -491,6 +514,9 @@ def run_web(
     _db_path = db_path
     _alerter = alerter
     _energy_rate = energy_rate
+    _energy_rate_night = energy_rate_night
+    _energy_day_start = energy_day_start
+    _energy_day_end = energy_day_end
     _energy_currency = energy_currency
     _circuit_names = circuit_names
 
@@ -917,7 +943,7 @@ function buildSHP(sn, name, d, allDevices) {
     </div>
     <div class="stats" style="margin-top:6px">
       <span class="stat-label">Combined</span><span class="stat-value soc-${c}">${Math.round(combinedSoc)}%</span>
-      <span class="stat-label">Grid Today</span><span class="stat-value">${fmtWh(gridDay)}${energyCfg ? ' <span style="color:var(--green)">'+energyCfg.currency+(gridDay/1000*energyCfg.rate).toFixed(2)+'</span>':''}</span>
+      <span class="stat-label">Grid Today</span><span class="stat-value">${fmtWh(gridDay)}${energyCfg ? ' <span style="color:var(--green)">'+energyCfg.currency+(gridDay/1000*energyCfg.current_rate).toFixed(2)+'</span>'+(energyCfg.rate_night?' <span style="color:var(--dim)">('+( new Date().getHours()>=energyCfg.day_start && new Date().getHours()<energyCfg.day_end?'Day':'Night')+': '+energyCfg.currency+energyCfg.current_rate+')</span>':''):''}</span>
       <span class="stat-label">Backup Today</span><span class="stat-value">${fmtWh(backupDay)}</span>
       <span class="stat-label">Total Load</span><span class="stat-value" style="font-weight:700">${fmtW(totalLoad)}</span>
       <span class="stat-label">Uptime</span><span class="stat-value">${uptimeStr}</span>

@@ -25,7 +25,10 @@ class Config:
     telegram_token: str = ""
     telegram_chat_id: str = ""
     # Energy cost tracking
-    energy_rate: float = 0.0       # cost per kWh
+    energy_rate: float = 0.0       # cost per kWh (flat rate or day rate)
+    energy_rate_night: float = 0.0 # night rate per kWh (0 = flat rate)
+    energy_day_start: int = 7      # day rate starts at this hour
+    energy_day_end: int = 23       # night rate starts at this hour
     energy_currency: str = "$"     # currency symbol
     # Circuit names (12 comma-separated names for SHP circuits)
     circuit_names: list[str] | None = None
@@ -76,9 +79,29 @@ def load_config(env_file: str = ".env") -> Config:
         telegram_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID", ""),
         energy_rate=float(os.environ.get("ENERGY_RATE", "0")),
+        energy_rate_night=float(os.environ.get("ENERGY_RATE_NIGHT", "0")),
+        energy_day_start=int(os.environ.get("ENERGY_DAY_START", "7")),
+        energy_day_end=int(os.environ.get("ENERGY_DAY_END", "23")),
         energy_currency=os.environ.get("ENERGY_CURRENCY", "$"),
         circuit_names=_parse_circuit_names(os.environ.get("CIRCUIT_NAMES", "")),
     )
+
+
+def get_energy_rate(config: Config, hour: int | None = None) -> float:
+    """Get energy rate for a given hour. Supports day/night tariffs."""
+    if not config.energy_rate:
+        return 0.0
+    if not config.energy_rate_night:
+        return config.energy_rate  # flat rate
+    if hour is None:
+        from datetime import datetime
+        hour = datetime.now().hour
+    # Day rate window (e.g. 7-23)
+    if config.energy_day_start <= config.energy_day_end:
+        is_day = config.energy_day_start <= hour < config.energy_day_end
+    else:  # overnight day window (unusual but handle it)
+        is_day = hour >= config.energy_day_start or hour < config.energy_day_end
+    return config.energy_rate if is_day else config.energy_rate_night
 
 
 def _parse_circuit_names(raw: str) -> list[str] | None:
