@@ -206,7 +206,7 @@ def _live_collector() -> None:
         if _mqtt:
             for sn in _device_types:
                 data = _mqtt.get_device_data(sn)
-                point = {"ts": datetime.now().strftime("%H:%M:%S")}
+                point = {"ts": int(datetime.now().timestamp() * 1000)}
                 # Collect key metrics
                 for k in [
                     "ems.lcdShowSoc", "bmsMaster.soc", "bmsMaster.soh",
@@ -768,7 +768,7 @@ async function updateLiveCharts() {
     const points = await r.json();
     if (!points.length) return;
 
-    const labels = points.map(p => p.ts);
+    const labels = points.map(p => typeof p.ts === 'number' ? new Date(p.ts).toLocaleTimeString() : p.ts);
     const dtype = allDevicesList[chartSn]?.type || '';
 
     // SOC chart
@@ -860,7 +860,11 @@ async function loadHistory() {
     const points = await r.json();
     if (!points.length || points.error) return;
 
-    const labels = points.map(p => p.ts?.slice(5,16) || '');
+    const labels = points.map(p => {
+      if (!p.ts) return '';
+      const d = new Date(p.ts);
+      return isNaN(d) ? p.ts.slice(5,16) : d.toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+    });
     const dtype = allDevicesList[chartSn]?.type || '';
 
     // SOC

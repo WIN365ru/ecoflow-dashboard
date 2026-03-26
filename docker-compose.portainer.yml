@@ -30,6 +30,7 @@ services:
       - ENERGY_RATE=${ENERGY_RATE:-0}
       - ENERGY_CURRENCY=${ENERGY_CURRENCY:-$}
       - CIRCUIT_NAMES=${CIRCUIT_NAMES:-}
+      - TZ=${TZ:-UTC}
     volumes:
       - ecoflow-data:/data
 
