@@ -26,9 +26,9 @@ EcoFlow Dashboard  v0.5.1  MQTT Connected  2026-03-26 04:30:55
 +-----------------------------------------+-----------------------------------------+
 | ########################--------------- | ################################------- |
 |                                         |                                         |
-| Solar In       0 W  AC In  1.3 kW (50Hz)| Solar In       0 W  AC In        0 W   |
-| AC Out         0 W  12V/Car Out    0 W  | AC Out         0 W  12V/Car Out  0 W   |
-| USB Out        1 W  Total Out  1 W (0%) | Total In       0 W  Total Out    0 W   |
+| Solar In       0 W  AC In  1.3 kW (50Hz)| Solar In       0 W  AC In        0 W    |
+| AC Out         0 W  12V/Car Out    0 W  | AC Out         0 W  12V/Car Out  0 W    |
+| USB Out        1 W  Total Out  1 W (0%) | Total In       0 W  Total Out    0 W    |
 | Total In   1.3 kW                       |                                         |
 |                                         |                                         |
 | Charge Time  0h 49m  Voltage    51.5 V  | Idle Time        --  Voltage    50.1 V  |
@@ -38,8 +38,8 @@ EcoFlow Dashboard  v0.5.1  MQTT Connected  2026-03-26 04:30:55
 | Cycles       569  Limits   10% - 100%   | Cycles       655  Limits   10% - 100%   |
 | Fan    Inv ON (Lvl1)  Beep          ON  | Fan      Off (Auto)  Beep          ON   |
 |                                         |                                         |
-| PD 1.2.0.156  MPPT 3.1.0.50            | PD 1.2.0.156  MPPT 3.1.0.50            |
-| BMS 1.1.5.35  Inv 2.1.1.158            | BMS 1.1.5.35  Inv 2.1.1.158            |
+| PD 1.2.0.156  MPPT 3.1.0.50             | PD 1.2.0.156  MPPT 3.1.0.50             |
+| BMS 1.1.5.35  Inv 2.1.1.158             | BMS 1.1.5.35  Inv 2.1.1.158             |
 |                                         |                                         |
 | Lifetime Energy                         | Lifetime Energy                         |
 | AC Chg  1918 kWh  Solar  925 kWh        | AC Chg  2590 kWh  Solar  426 kWh        |
@@ -50,19 +50,19 @@ EcoFlow Dashboard  v0.5.1  MQTT Connected  2026-03-26 04:30:55
 +------------------------ Smart Home Panel (SP10ZEWXXXXXXXX) -----------------------+
 | Grid          ON   Grid Today    2.82 kWh   Backup Today             0 Wh         |
 | Combined  81%  6.71 kWh   Limits       --   Sched Chg              OFF            |
-|                                                                                    |
-| Batt 1: 91% 3.28 kWh 25C  Standby                         Chg:9d 8h              |
-| Batt 2: 71% 2.56 kWh 23C  GridChg  +1.3 kW                Chg:0h 49m             |
-|                                                                                    |
-|                                  Circuits                                          |
+|                                                                                   |
+| Batt 1: 91% 3.28 kWh 25C  Standby                         Chg:9d 8h               |
+| Batt 2: 71% 2.56 kWh 23C  GridChg  +1.3 kW                Chg:0h 49m              |
+|                                                                                   |
+|                                  Circuits                                         |
 |  #  Name      Power  Mode  Priority  |  #  Name      Power  Mode  Priority        |
-|  1             70 W  Auto     -      |  7             15 W   Auto     6            |
-|  2            700 W  Auto     1      |  8             40 W   Auto     7            |
-|  3             35 W  Auto     2      |  9             45 W   Auto     8            |
-|  4              0 W  Auto     3      | 10              0 W   Auto     9            |
-|  5              0 W  Auto     4      | 11  DP.0352     0 W   Auto     -            |
-|  6             10 W  Auto     5      | 12  DP.0801  1.4 kW   Auto     -            |
-|                                      |                           98%               |
+|  1             70 W  Auto     -      |  7             15 W   Auto     6           |
+|  2            700 W  Auto     1      |  8             40 W   Auto     7           |
+|  3             35 W  Auto     2      |  9             45 W   Auto     8           |
+|  4              0 W  Auto     3      | 10              0 W   Auto     9           |
+|  5              0 W  Auto     4      | 11  DP.0352     0 W   Auto     -           |
+|  6             10 W  Auto     5      | 12  DP.0801  1.4 kW   Auto     -           |
+|                                      |                           98%              |
 |                                             1.3 kW | Up: 3d 1h                    |
 +------------------------------------------------------------------------------------+
   [a] AC  [d] DC  [x] XBoost  [b] Beep  [c] Charging  [+/-] Chg%  [w/s] ChgW
@@ -230,9 +230,9 @@ python -m ecoflow_dashboard --db /path/to/history.db
                          v                       v
                     MQTT Broker          +------ Main Process ------+
                     (port 8883)          |                          |
-                                         |  Rich CLI    Flask Web  |
-                                         |  Dashboard   Dashboard  |
-                                         |  (terminal)  (browser)  |
+                                         |  Rich CLI    Flask Web   |
+                                         |  Dashboard   Dashboard   |
+                                         |  (terminal)  (browser)   |
                                          |                          |
                                          +--- SQLite Logger -------+
                                               (periodic snapshots)
