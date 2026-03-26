@@ -145,13 +145,13 @@ def _build_delta_pro_panel(sn: str, data: dict, name: str, device_type: str = DE
 
     # Title with device type + SOC prominently displayed
     panel_title = (
-        f"[bold]{type_label}[/bold] [dim]({sn})[/dim]"
+        f"[bold]{type_label}[/bold] [white]({sn})[/white]"
         f"  [{color} bold]{int(soc)}%[/]"
     )
     # Subtitle with health and capacity
     panel_subtitle = (
-        f"Health: [{soh_c} bold]{int(soh)}%[/] [{soh_c}]({soh_lbl})[/]"
-        f"  [dim]{_fmt_wh(remain_wh)} / {_fmt_wh(full_wh)}[/]"
+        f"[bold]Health: [{soh_c}]{int(soh)}%[/] [{soh_c}]({soh_lbl})[/][/bold]"
+        f"  [white]{_fmt_wh(remain_wh)} / {_fmt_wh(full_wh)}[/white]"
     )
 
     # Power I/O table
@@ -686,7 +686,7 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
 
     return Panel(
         Group(*elements),
-        title=f"[bold]{type_label}[/bold] [dim]({sn})[/dim]",
+        title=f"[bold]{type_label}[/bold] [white]({sn})[/white]",
         subtitle=" | ".join(subtitle_parts),
         border_style="cyan",
     )
