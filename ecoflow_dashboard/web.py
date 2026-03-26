@@ -431,7 +431,9 @@ def api_solar() -> Response:
             daily = []
             total_solar_kwh = 0
             total_grid_kwh = 0
-            for day, avg_w, samples in solar_rows:
+            for day, avg_w_raw, samples in solar_rows:
+                # avg_w_raw is in deciWatts, convert to watts
+                avg_w = avg_w_raw / 10
                 # Energy = avg_watts × hours_of_samples
                 solar_kwh = avg_w * samples * log_interval / 3_600_000  # W × s → kWh
                 grid_kwh = grid_map.get(day, 0)
@@ -1110,7 +1112,7 @@ async function updateLiveCharts() {
           borderColor: '#3fb950', borderWidth: 1.5, pointRadius: 0 },
         { label: 'Total Out', data: points.map(p => p['pd.wattsOutSum'] ?? null),
           borderColor: '#f85149', borderWidth: 1.5, pointRadius: 0 },
-        { label: 'Solar', data: points.map(p => p['mppt.inWatts'] ?? null),
+        { label: 'Solar', data: points.map(p => p['mppt.inWatts'] != null ? p['mppt.inWatts']/10 : null),
           borderColor: '#d29922', borderWidth: 1.5, pointRadius: 0 },
       ]};
     } else {
@@ -1202,7 +1204,7 @@ async function loadHistory() {
           borderColor: '#3fb950', borderWidth: 1.5, pointRadius: 0 },
         { label: 'Total Out', data: points.map(p => p['pd.wattsOutSum'] ?? null),
           borderColor: '#f85149', borderWidth: 1.5, pointRadius: 0 },
-        { label: 'Solar', data: points.map(p => p['mppt.inWatts'] ?? null),
+        { label: 'Solar', data: points.map(p => p['mppt.inWatts'] != null ? p['mppt.inWatts']/10 : null),
           borderColor: '#d29922', borderWidth: 1.5, pointRadius: 0 },
       ]};
     } else {
