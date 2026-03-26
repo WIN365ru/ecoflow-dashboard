@@ -70,8 +70,17 @@ class AlertManager:
         self._last_summary_date: str = ""
 
     def start(self) -> None:
-        # Send startup notification
-        self._send("🟢 *EcoFlow Dashboard Started*\nAlerts are active.")
+        # Send startup notification with device summary
+        from . import __version__
+        dev_list = []
+        for sn, dtype in self._device_types.items():
+            label = self._device_label(sn)
+            dev_list.append(f"  • {label}")
+        devices_str = "\n".join(dev_list) if dev_list else "  No devices"
+        self._send(
+            f"🟢 *EcoFlow Dashboard v{__version__}*\n"
+            f"Alerts active — monitoring:\n{devices_str}"
+        )
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         log.info("AlertManager started (Telegram chat=%s)", self._chat_id)
