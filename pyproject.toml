@@ -1,6 +1,6 @@
 [project]
 name = "ecoflow-dashboard"
-version = "0.5.2"
+version = "0.5.3"
 description = "Real-time CLI dashboard for EcoFlow power stations & Smart Home Panel"
 readme = "README.md"
 license = {text = "MIT"}

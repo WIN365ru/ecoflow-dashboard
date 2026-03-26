@@ -16,6 +16,29 @@ from .mqtt_client import EcoFlowMqttClient
 
 log = logging.getLogger(__name__)
 
+_latest_version_cache: str = ""
+_latest_version_ts: float = 0
+
+
+def _get_latest_version() -> str:
+    global _latest_version_cache, _latest_version_ts
+    now = _time.time()
+    if now - _latest_version_ts < 3600:  # cache 1 hour
+        return _latest_version_cache
+    try:
+        import requests
+        r = requests.get(
+            "https://api.github.com/repos/WIN365ru/ecoflow-dashboard/releases/latest",
+            timeout=5,
+        )
+        if r.ok:
+            _latest_version_cache = r.json().get("tag_name", "").lstrip("v")
+            _latest_version_ts = now
+    except Exception:
+        pass
+    return _latest_version_cache
+
+
 # Global references set by run_web()
 _mqtt: EcoFlowMqttClient | None = None
 _device_types: dict[str, str] = {}
@@ -55,7 +78,8 @@ def api_devices() -> Response:
             "data": clean,
         }
     return Response(
-        json.dumps({"connected": _mqtt.connected, "version": __version__, "devices": result}),
+        json.dumps({"connected": _mqtt.connected, "version": __version__,
+                    "latest_version": _get_latest_version(), "devices": result}),
         content_type="application/json",
     )
 
@@ -421,27 +445,60 @@ function buildDeltaPro(sn, name, d) {
   const sohC = soh >= 80 ? 'green' : soh >= 60 ? 'yellow' : 'red';
   const sohLabel = soh >= 90 ? 'Excellent' : soh >= 80 ? 'Good' : soh >= 60 ? 'Fair' : 'Poor';
 
+  // Additional data matching CLI richness
+  const usbC1 = g(d,'pd.typec1Watts'); const usbC2 = g(d,'pd.typec2Watts');
+  const usb1 = g(d,'pd.usb1Watts'); const usb2 = g(d,'pd.usb2Watts');
+  const usbTotal = usbC1+usbC2+usb1+usb2;
+  const mpptTemp = Math.round(g(d,'mppt.mpptTemp'));
+  const mosTemp = Math.round(g(d,'bmsMaster.maxMosTemp','bmsMaster.minMosTemp'));
+  const minCellT = Math.round(g(d,'bmsMaster.minCellTemp'));
+  const maxCellT = Math.round(g(d,'bmsMaster.maxCellTemp'));
+  const fanLvl = g(d,'inv.fanState'); const fanMode = g(d,'pd.iconFanMode');
+  const beep = g(d,'pd.beepState');
+  const xboost = g(d,'inv.cfgAcXboost');
+  const remainMah = g(d,'bmsMaster.remainCap');
+  const fullMah = g(d,'bmsMaster.fullCap');
+  const remainWh = remainMah * volts * 1000 / 1e6;
+  const fullWh = fullMah * volts * 1000 / 1e6;
+  const chgAc = g(d,'pd.chgPowerAc'); const chgSun = g(d,'pd.chgSunPower');
+  const dsgAc = g(d,'pd.dsgPowerAc'); const dsgDc = g(d,'pd.dsgPowerDc');
+  const pdFw = d['pd.sysVer'] || ''; const bmsFw = d['bmsMaster.bmsHeartbeatVer'] || '';
+  const invFw = d['inv.sysVer'] || ''; const mpptFw = d['mppt.swVer'] || '';
+  const acFreq = g(d,'inv.cfgAcOutFreq') ? '50Hz' : '60Hz';
+  const acVolt = g(d,'inv.cfgAcOutVoltage') / 1000;
+
   return `<div class="card">
-    <div class="card-title">${name} <span style="color:var(--dim);font-size:11px">${sn.slice(-6)}</span></div>
+    <div class="card-title">Delta Pro <span style="color:var(--dim);font-size:11px">(${sn.slice(-6)})</span></div>
     <div class="soc soc-${c}">${Math.round(soc)}%</div>
     <div class="bar-bg"><div class="bar-fill bar-${c}" style="width:${Math.min(100,Math.max(0,soc))}%"></div></div>
-    <div class="health health-${sohC}">Health: ${Math.round(soh)}% (${sohLabel})</div>
+    <div class="health health-${sohC}">Health: ${Math.round(soh)}% (${sohLabel}) &nbsp; ${remainWh>0?remainWh.toFixed(1)+' / '+fullWh.toFixed(1)+' kWh':''}</div>
     <div class="stats">
       <span class="stat-label">Solar In</span><span class="stat-value stat-green">${fmtW(solarIn)}</span>
-      <span class="stat-label">AC In</span><span class="stat-value stat-green">${fmtW(acIn)}</span>
+      <span class="stat-label">AC In</span><span class="stat-value stat-green">${fmtW(acIn)}${acIn>0?' ('+Math.round(acVolt)+'V '+acFreq+')':''}</span>
       <span class="stat-label">AC Out</span><span class="stat-value stat-red">${fmtW(acOut)}</span>
       <span class="stat-label">12V/Car</span><span class="stat-value stat-red">${fmtW(car)}</span>
+      ${usbTotal>0?`<span class="stat-label">USB</span><span class="stat-value stat-red">${fmtW(usbTotal)}</span>`:''}
       <span class="stat-label">Total In</span><span class="stat-value stat-green">${fmtW(totalIn)}</span>
       <span class="stat-label">Total Out</span><span class="stat-value stat-red">${fmtW(totalOut)}</span>
       <span class="stat-label">${timeLabel}</span><span class="stat-value">${timeVal}</span>
       <span class="stat-label">DC Bus</span><span class="stat-value">${fmtW(dcBus)}</span>
       <span class="stat-label">Voltage</span><span class="stat-value">${volts.toFixed(1)} V</span>
       <span class="stat-label">Current</span><span class="stat-value" style="color:var(${current>0?'--green':'--red'})">${current.toFixed(1)} A</span>
-      <span class="stat-label">Cell V</span><span class="stat-value">${minV.toFixed(2)}-${maxV.toFixed(2)} V <span style="color:var(${delta<=20?'--green':delta<=50?'--yellow':'--red'});">\u0394${delta}mV</span></span>
+      <span class="stat-label">Cell V</span><span class="stat-value">${minV.toFixed(2)}-${maxV.toFixed(2)}V <span style="color:var(${delta<=20?'--green':delta<=50?'--yellow':'--red'});">\u0394${delta}mV</span></span>
+      <span class="stat-label">Cell T</span><span class="stat-value">${minCellT}-${maxCellT}\u00b0C</span>
       <span class="stat-label">Batt / Inv</span><span class="stat-value">${battTemp}\u00b0 / ${invTemp}\u00b0C</span>
+      <span class="stat-label">MPPT / MOS</span><span class="stat-value">${mpptTemp}\u00b0 / ${mosTemp}\u00b0C</span>
       <span class="stat-label">Cycles</span><span class="stat-value">${cycles}</span>
       <span class="stat-label">Limits</span><span class="stat-value">${Math.round(g(d,'ems.minDsgSoc'))}%-${Math.round(g(d,'ems.maxChargeSoc'))}%</span>
+      <span class="stat-label">Fan</span><span class="stat-value">${fanLvl?'ON (Lvl'+fanLvl+')':'Off'}</span>
+      <span class="stat-label">Beep</span><span class="stat-value">${beep?'OFF':'ON'}</span>
     </div>
+    ${chgAc||chgSun||dsgAc||dsgDc?`<div class="section-title">Lifetime Energy</div><div class="stats">
+      <span class="stat-label">AC Charged</span><span class="stat-value stat-green">${fmtWh(chgAc)}</span>
+      <span class="stat-label">Solar Charged</span><span class="stat-value stat-green">${fmtWh(chgSun)}</span>
+      <span class="stat-label">AC Discharged</span><span class="stat-value stat-red">${fmtWh(dsgAc)}</span>
+      <span class="stat-label">DC Discharged</span><span class="stat-value stat-red">${fmtWh(dsgDc)}</span>
+    </div>`:''}
     <div class="controls">
       <button class="btn ${acEnabled?'btn-on':'btn-off'}" onclick="sendCmd('${sn}','a')">AC ${acEnabled?'ON':'OFF'}</button>
       <button class="btn ${dcEnabled?'btn-on':'btn-off'}" onclick="sendCmd('${sn}','d')">DC ${dcEnabled?'ON':'OFF'}</button>
@@ -479,8 +536,39 @@ function buildSHP(sn, name, d, allDevices) {
     circuitHTML += `<tr${cls}><td>${i+1}</td><td>${label}</td><td class="power">${fmtW(w)}</td></tr>`;
   }
 
+  // Battery details
+  let battHTML = '';
+  for (let i = 0; i < 2; i++) {
+    const bSoc = g(d,`energyInfos.${i}.batteryPercentage`);
+    const bConn = g(d,`energyInfos.${i}.stateBean.isConnect`);
+    const bTemp = Math.round(g(d,`energyInfos.${i}.emsBatTemp`));
+    const bChgT = g(d,`energyInfos.${i}.chargeTime`);
+    const bDsgT = g(d,`energyInfos.${i}.dischargeTime`);
+    const bIn = g(d,`energyInfos.${i}.lcdInputWatts`);
+    const bOut = g(d,`energyInfos.${i}.outputPower`);
+    const bGridChg = g(d,`energyInfos.${i}.stateBean.isGridCharge`);
+    const bOutput = g(d,`energyInfos.${i}.stateBean.isPowerOutput`);
+    const bFullMah = g(d,`energyInfos.${i}.fullCap`);
+    const bRemainWh = (bSoc/100 * bFullMah * 45 / 1e6);
+    if (!bConn) { battHTML += `<div style="color:var(--dim)">Batt ${i+1}: Not connected</div>`; continue; }
+    const bc = socColor(bSoc);
+    let status = bGridChg ? '<span style="color:var(--green)">GridChg</span>' : bOutput ? '<span style="color:var(--red)">Output</span>' : '<span style="color:var(--dim)">Standby</span>';
+    let power = '';
+    if (bIn > 0) power += ` <span style="color:var(--green)">+${fmtW(bIn)}</span>`;
+    if (bOut > 0) power += ` <span style="color:var(--red)">-${fmtW(bOut)}</span>`;
+    let time = bChgT > 0 ? `Chg:${fmtTime(bChgT)}` : bDsgT > 0 ? `Dsg:${fmtTime(bDsgT)}` : '';
+    battHTML += `<div>Batt ${i+1}: <b style="color:var(--${bc})">${Math.round(bSoc)}%</b> ${bRemainWh.toFixed(1)}kWh ${bTemp}\u00b0C ${status}${power} ${time}</div>`;
+  }
+
+  // Uptime
+  const workTime = g(d,'workTime');
+  const uptimeS = workTime > 0 ? Math.round(workTime / 1000) : 0;
+  const uptimeD = Math.floor(uptimeS / 86400);
+  const uptimeH = Math.floor((uptimeS % 86400) / 3600);
+  const uptimeStr = uptimeS > 0 ? `${uptimeD}d ${uptimeH}h` : '--';
+
   return `<div class="card">
-    <div class="card-title">${name} <span style="color:var(--dim);font-size:11px">${sn.slice(-6)}</span></div>
+    <div class="card-title">Smart Home Panel <span style="color:var(--dim);font-size:11px">(${sn.slice(-6)})</span></div>
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <span>Grid: <b style="color:var(${gridSta?'--green':'--red'})">${gridSta?'ON':'OFF'}</b></span>
       ${gridVol ? `<span style="color:var(--dim)">${Math.round(gridVol)}V ${Math.round(gridFreq)}Hz</span>` : ''}
@@ -491,8 +579,10 @@ function buildSHP(sn, name, d, allDevices) {
       <span class="stat-label">Grid Today</span><span class="stat-value">${fmtWh(gridDay)}</span>
       <span class="stat-label">Backup Today</span><span class="stat-value">${fmtWh(backupDay)}</span>
       <span class="stat-label">Total Load</span><span class="stat-value" style="font-weight:700">${fmtW(totalLoad)}</span>
+      <span class="stat-label">Uptime</span><span class="stat-value">${uptimeStr}</span>
     </div>
-    <div class="section-title">Circuits</div>
+    ${battHTML}
+    <div class="section-title" style="margin-top:8px">Circuits</div>
     <table class="circuits"><tr><th>#</th><th>Name</th><th style="text-align:right">Power</th></tr>${circuitHTML}</table>
     <div class="controls">
       <button class="btn ${eps?'btn-on':'btn-off'}" onclick="sendCmd('${sn}','e')">EPS ${eps?'ON':'OFF'}</button>
@@ -507,7 +597,15 @@ async function refresh() {
     const r = await fetch('/api/devices');
     const j = await r.json();
 
-    $('#version').textContent = 'v' + j.version;
+    const verEl = $('#version');
+    const isDocker = navigator.userAgent.includes('docker') || window.location.port === '5000';
+    if (j.latest_version && j.latest_version !== j.version) {
+      verEl.innerHTML = 'v' + j.version + ' <span title="v' + j.latest_version + ' available' +
+        (isDocker ? ' — docker pull ghcr.io/win365ru/ecoflow-dashboard:latest' : ' — pip install --upgrade') +
+        '" style="color:var(--yellow);cursor:help">\u26a0\ufe0f</span>';
+    } else {
+      verEl.textContent = 'v' + j.version;
+    }
     const mb = $('#mqtt-badge');
     mb.textContent = j.connected ? 'MQTT Connected' : 'MQTT Disconnected';
     mb.className = 'badge ' + (j.connected ? 'badge-green' : 'badge-red');
@@ -592,7 +690,11 @@ function updateDeviceSelector(devs) {
   const prev = sel.value;
   const sns = Object.keys(devs);
   if (sel.options.length !== sns.length) {
-    sel.innerHTML = sns.map(sn => `<option value="${sn}">${devs[sn].name} (${sn.slice(-6)})</option>`).join('');
+    sel.innerHTML = sns.map(sn => {
+      const t = devs[sn].type || '';
+      const label = t.includes('delta') ? 'Delta Pro' : t.includes('panel') ? 'Smart Panel' : t;
+      return `<option value="${sn}">${label} (${sn.slice(-6)})</option>`;
+    }).join('');
   }
   if (!chartSn && sns.length) chartSn = sns[0];
   if (prev) sel.value = prev;
