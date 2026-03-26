@@ -91,16 +91,33 @@ def api_history() -> Response:
         return Response(json.dumps([]), content_type="application/json")
     sn = request.args.get("sn", "")
     key = request.args.get("key", "")
-    hours = int(request.args.get("hours", "24"))
+    hours = request.args.get("hours", "")
+    start = request.args.get("start", "")  # ISO date: 2026-03-01
+    end = request.args.get("end", "")      # ISO date: 2026-03-26
     if not sn:
         return Response(json.dumps({"error": "sn required"}), status=400, content_type="application/json")
+
+    # Build time filter: custom range takes priority over hours
+    if start and end:
+        time_clause = "AND timestamp >= ? AND timestamp <= ?"
+        time_params = (start, end + "T23:59:59")
+    elif start:
+        time_clause = "AND timestamp >= ?"
+        time_params = (start,)
+    elif hours:
+        time_clause = "AND timestamp >= datetime('now', ?)"
+        time_params = (f"-{int(hours)} hours",)
+    else:
+        time_clause = "AND timestamp >= datetime('now', ?)"
+        time_params = ("-24 hours",)
+
     try:
         with sqlite3.connect(_db_path) as conn:
             if key:
                 rows = conn.execute(
-                    "SELECT timestamp, value FROM snapshots WHERE device_sn=? AND key=? "
-                    "AND timestamp >= datetime('now', ?) ORDER BY timestamp",
-                    (sn, key, f"-{hours} hours"),
+                    f"SELECT timestamp, value FROM snapshots WHERE device_sn=? AND key=? "
+                    f"{time_clause} ORDER BY timestamp",
+                    (sn, key, *time_params),
                 ).fetchall()
                 return Response(
                     json.dumps([{"ts": r[0], "v": r[1]} for r in rows]),
@@ -109,9 +126,9 @@ def api_history() -> Response:
             else:
                 # Return all keys for this device in the time range
                 rows = conn.execute(
-                    "SELECT timestamp, key, value FROM snapshots WHERE device_sn=? "
-                    "AND timestamp >= datetime('now', ?) ORDER BY timestamp",
-                    (sn, f"-{hours} hours"),
+                    f"SELECT timestamp, key, value FROM snapshots WHERE device_sn=? "
+                    f"{time_clause} ORDER BY timestamp",
+                    (sn, *time_params),
                 ).fetchall()
                 # Group by timestamp
                 result: dict[str, dict] = {}
@@ -123,6 +140,27 @@ def api_history() -> Response:
                     json.dumps(list(result.values())),
                     content_type="application/json",
                 )
+    except Exception as e:
+        return Response(json.dumps({"error": str(e)}), status=500, content_type="application/json")
+
+
+@app.route("/api/history/range")
+def api_history_range() -> Response:
+    """Return available data date range per device."""
+    if not _db_path:
+        return Response(json.dumps({}), content_type="application/json")
+    try:
+        with sqlite3.connect(_db_path) as conn:
+            result = {}
+            for sn in _device_types:
+                row = conn.execute(
+                    "SELECT MIN(timestamp), MAX(timestamp), COUNT(DISTINCT timestamp) "
+                    "FROM snapshots WHERE device_sn=?",
+                    (sn,),
+                ).fetchone()
+                if row and row[0]:
+                    result[sn] = {"start": row[0][:10], "end": row[1][:10], "snapshots": row[2]}
+            return Response(json.dumps(result), content_type="application/json")
     except Exception as e:
         return Response(json.dumps({"error": str(e)}), status=500, content_type="application/json")
 
@@ -282,12 +320,20 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <span class="card-title" style="margin:0">Charts</span>
     <button class="btn tab-btn active" onclick="setChartMode('live')">Live (1h)</button>
     <button class="btn tab-btn" onclick="setChartMode('history')">History</button>
-    <select id="hist-hours" class="btn" style="display:none" onchange="loadHistory()">
+    <select id="hist-hours" class="btn" style="display:none" onchange="histRangeChanged()">
       <option value="1">1 hour</option><option value="6">6 hours</option>
       <option value="24" selected>24 hours</option><option value="72">3 days</option>
       <option value="168">7 days</option><option value="336">14 days</option>
-      <option value="720">30 days</option>
+      <option value="720">30 days</option><option value="2160">90 days</option>
+      <option value="8760">1 year</option><option value="custom">Custom range...</option>
     </select>
+    <span id="custom-range" style="display:none">
+      <input type="date" id="hist-start" class="btn" style="color:#e6edf3;background:#21262d;border:1px solid #30363d">
+      <span style="color:#8b949e">to</span>
+      <input type="date" id="hist-end" class="btn" style="color:#e6edf3;background:#21262d;border:1px solid #30363d">
+      <button class="btn" onclick="loadHistory()" style="background:#238636">Go</button>
+    </span>
+    <span id="hist-info" style="display:none;color:#8b949e;font-size:0.8em"></span>
     <select id="chart-device" class="btn" onchange="chartDeviceChanged()"></select>
   </div>
   <div class="chart-grid">
@@ -531,12 +577,14 @@ function setChartMode(mode) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b => { if(b.textContent.toLowerCase().includes(mode)) b.classList.add('active'); });
   document.getElementById('hist-hours').style.display = mode === 'history' ? '' : 'none';
-  if (mode === 'history') loadHistory();
+  document.getElementById('custom-range').style.display = 'none';
+  document.getElementById('hist-info').style.display = mode === 'history' ? '' : 'none';
+  if (mode === 'history') { fetchHistRange(); loadHistory(); }
 }
 
 function chartDeviceChanged() {
   chartSn = document.getElementById('chart-device').value;
-  if (chartMode === 'history') loadHistory();
+  if (chartMode === 'history') { fetchHistRange(); loadHistory(); }
 }
 
 function updateDeviceSelector(devs) {
@@ -615,11 +663,40 @@ async function updateLiveCharts() {
   } catch(e) { console.error('chart error', e); }
 }
 
+function histRangeChanged() {
+  const sel = document.getElementById('hist-hours').value;
+  document.getElementById('custom-range').style.display = sel === 'custom' ? '' : 'none';
+  if (sel !== 'custom') loadHistory();
+}
+
+async function fetchHistRange() {
+  try {
+    const r = await fetch('/api/history/range');
+    const ranges = await r.json();
+    if (chartSn && ranges[chartSn]) {
+      const info = ranges[chartSn];
+      document.getElementById('hist-info').textContent =
+        `Data: ${info.start} to ${info.end} (${info.snapshots} snapshots)`;
+      document.getElementById('hist-start').value = info.start;
+      document.getElementById('hist-end').value = info.end;
+    }
+  } catch(e) {}
+}
+
 async function loadHistory() {
   if (!chartSn) return;
-  const hours = document.getElementById('hist-hours').value;
+  const sel = document.getElementById('hist-hours').value;
+  let url;
+  if (sel === 'custom') {
+    const start = document.getElementById('hist-start').value;
+    const end = document.getElementById('hist-end').value;
+    if (!start || !end) return;
+    url = `/api/history?sn=${chartSn}&start=${start}&end=${end}`;
+  } else {
+    url = `/api/history?sn=${chartSn}&hours=${sel}`;
+  }
   try {
-    const r = await fetch(`/api/history?sn=${chartSn}&hours=${hours}`);
+    const r = await fetch(url);
     const points = await r.json();
     if (!points.length || points.error) return;
 
