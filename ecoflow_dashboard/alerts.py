@@ -44,6 +44,7 @@ class AlertManager:
         telegram_token: str,
         telegram_chat_id: str,
         energy_rate: float = 0.0,
+        energy_rate_night: float = 0.0,
         energy_currency: str = "$",
         db_path: str = "",
     ) -> None:
@@ -75,6 +76,7 @@ class AlertManager:
 
         # Energy cost
         self._energy_rate = energy_rate
+        self._energy_rate_night = energy_rate_night
         self._energy_currency = energy_currency
         self._db_path = db_path
 
@@ -92,6 +94,12 @@ class AlertManager:
         # Solar charge milestone tracking: {sn: last_notified_milestone}
         # Notify at 50%, 80%, 90%, 100%
         self._solar_charge_milestones: dict[str, int] = {}
+
+        # Outage tracking: {sn: {start_ts, start_soc1, start_soc2, ...}}
+        self._outage_state: dict[str, dict] = {}
+
+        # Arbitrage: track current tariff period to alert on transitions
+        self._current_tariff: str = ""  # "day" or "night"
 
     def start(self) -> None:
         # Send startup notification with device summary and current status
@@ -173,6 +181,7 @@ class AlertManager:
         while not self._stop.is_set():
             try:
                 self._check_all()
+                self._check_tariff_change()
                 self._check_daily_summary()
                 self._check_monthly_report()
             except Exception:
@@ -246,24 +255,65 @@ class AlertManager:
             self._prev[sn] = dict(data)
 
     def _check_shp(self, sn: str, data: dict, prev: dict, label: str, ts: str) -> None:
-        # ── Grid outage / restore ──
+        # ── Grid outage / restore with detailed reporting ──
         grid_now = data.get("gridSta") or data.get("heartbeat.gridSta")
         grid_prev = prev.get("gridSta") or prev.get("heartbeat.gridSta")
 
         if grid_prev is not None and grid_now != grid_prev:
             if not grid_now and _env_bool("ALERT_GRID_OUTAGE"):
-                if self._can_alert(f"grid_out:{sn}"):
-                    # Get battery levels for context
-                    b1 = self._get_float(data, "energyInfos.0.batteryPercentage")
-                    b2 = self._get_float(data, "energyInfos.1.batteryPercentage")
-                    batt_info = f"Batt 1: {b1:.0f}%"
-                    b2_conn = self._get_float(data, "energyInfos.1.stateBean.isConnect")
-                    if b2_conn:
-                        batt_info += f" | Batt 2: {b2:.0f}%"
-                    self._send(f"⚡ *GRID OUTAGE*\n{label}\nPower lost at {ts}\n{batt_info}")
+                # Grid just went DOWN — start tracking outage
+                b1 = self._get_float(data, "energyInfos.0.batteryPercentage")
+                b2 = self._get_float(data, "energyInfos.1.batteryPercentage")
+                b2_conn = self._get_float(data, "energyInfos.1.stateBean.isConnect")
+                total_load = sum(self._get_float(data, f"infoList.{i}.chWatt") for i in range(12))
+
+                self._outage_state[sn] = {
+                    "start": time.time(),
+                    "start_ts": ts,
+                    "b1_start": b1,
+                    "b2_start": b2 if b2_conn else None,
+                    "load_at_start": total_load,
+                }
+
+                batt_info = f"Batt 1: {b1:.0f}%"
+                if b2_conn:
+                    batt_info += f" | Batt 2: {b2:.0f}%"
+                self._send(
+                    f"⚡ *GRID OUTAGE*\n{label}\n"
+                    f"Power lost at {ts}\n"
+                    f"{batt_info}\n"
+                    f"Load: {total_load:.0f}W"
+                )
 
             elif grid_now and _env_bool("ALERT_GRID_RESTORE"):
-                if self._can_alert(f"grid_on:{sn}"):
+                # Grid RESTORED — generate outage report
+                outage = self._outage_state.pop(sn, None)
+                b1_now = self._get_float(data, "energyInfos.0.batteryPercentage")
+                b2_now = self._get_float(data, "energyInfos.1.batteryPercentage")
+
+                if outage:
+                    duration_s = time.time() - outage["start"]
+                    duration = self._fmt_duration(duration_s)
+                    b1_drain = outage["b1_start"] - b1_now
+
+                    report = (
+                        f"✅ *GRID RESTORED*\n{label}\n\n"
+                        f"⏱ Duration: *{duration}*\n"
+                        f"Started: {outage['start_ts']} → Restored: {ts}\n\n"
+                        f"🔋 Battery drain:\n"
+                        f"  Batt 1: {outage['b1_start']:.0f}% → {b1_now:.0f}% (*-{b1_drain:.0f}%*)"
+                    )
+                    if outage.get("b2_start") is not None:
+                        b2_drain = outage["b2_start"] - b2_now
+                        report += f"\n  Batt 2: {outage['b2_start']:.0f}% → {b2_now:.0f}% (*-{b2_drain:.0f}%*)"
+
+                    report += f"\n\nLoad at outage start: {outage['load_at_start']:.0f}W"
+
+                    # Log to SQLite
+                    self._log_outage(sn, outage, duration_s, b1_now, b2_now)
+
+                    self._send(report)
+                else:
                     self._send(f"✅ *GRID RESTORED*\n{label}\nPower back at {ts}")
 
         # ── Battery low (per-battery) ──
@@ -572,6 +622,81 @@ class AlertManager:
             self._discharge_milestones[sn] = 100
 
         return None
+
+    @staticmethod
+    def _fmt_duration(seconds: float) -> str:
+        s = int(seconds)
+        if s < 60:
+            return f"{s}s"
+        if s < 3600:
+            return f"{s // 60}m {s % 60}s"
+        h = s // 3600
+        m = (s % 3600) // 60
+        if h >= 24:
+            d = h // 24
+            h = h % 24
+            return f"{d}d {h}h {m}m"
+        return f"{h}h {m}m"
+
+    def _log_outage(self, sn: str, outage: dict, duration_s: float, b1_end: float, b2_end: float) -> None:
+        """Log outage event to SQLite."""
+        if not self._db_path:
+            return
+        try:
+            import sqlite3
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS outages ("
+                    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    "  sn TEXT, start_ts TEXT, end_ts TEXT,"
+                    "  duration_s REAL,"
+                    "  b1_start REAL, b1_end REAL,"
+                    "  b2_start REAL, b2_end REAL,"
+                    "  load_w REAL"
+                    ")"
+                )
+                conn.execute(
+                    "INSERT INTO outages (sn, start_ts, end_ts, duration_s, b1_start, b1_end, b2_start, b2_end, load_w) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (sn, outage["start_ts"], datetime.now().strftime("%H:%M:%S"),
+                     duration_s, outage["b1_start"], b1_end,
+                     outage.get("b2_start"), b2_end,
+                     outage.get("load_at_start", 0)),
+                )
+        except Exception as e:
+            log.warning("Failed to log outage: %s", e)
+
+    def _check_tariff_change(self) -> None:
+        """Alert on day/night tariff transitions for battery arbitrage."""
+        if not self._energy_rate or not getattr(self, '_energy_rate_night', 0):
+            return
+        hour = datetime.now().hour
+        day_start = int(os.environ.get("ENERGY_DAY_START", "7"))
+        day_end = int(os.environ.get("ENERGY_DAY_END", "23"))
+
+        if day_start <= hour < day_end:
+            tariff = "day"
+        else:
+            tariff = "night"
+
+        if self._current_tariff and tariff != self._current_tariff:
+            rate_night = float(os.environ.get("ENERGY_RATE_NIGHT", "0"))
+            currency = os.environ.get("ENERGY_CURRENCY", "$")
+
+            if tariff == "night":
+                self._send(
+                    f"🌙 *NIGHT RATE STARTED*\n"
+                    f"Rate: {currency}{rate_night}/kWh\n"
+                    f"💡 Good time to charge from grid"
+                )
+            else:
+                self._send(
+                    f"☀️ *DAY RATE STARTED*\n"
+                    f"Rate: {currency}{self._energy_rate}/kWh\n"
+                    f"💡 Consider pausing grid charge"
+                )
+
+        self._current_tariff = tariff
 
     @staticmethod
     def _get_float(data: dict, *keys: str) -> float:

@@ -32,6 +32,10 @@ class Config:
     energy_currency: str = "$"     # currency symbol
     # Circuit names (12 comma-separated names for SHP circuits)
     circuit_names: list[str] | None = None
+    # Solar forecast (Open-Meteo, no API key needed)
+    latitude: float = 0.0
+    longitude: float = 0.0
+    solar_peak_watts: float = 400
 
 
 def load_config(env_file: str = ".env") -> Config:
@@ -84,6 +88,9 @@ def load_config(env_file: str = ".env") -> Config:
         energy_day_end=int(os.environ.get("ENERGY_DAY_END", "23")),
         energy_currency=os.environ.get("ENERGY_CURRENCY", "$"),
         circuit_names=_parse_circuit_names(os.environ.get("CIRCUIT_NAMES", "")),
+        latitude=float(os.environ.get("SOLAR_LATITUDE", "0")),
+        longitude=float(os.environ.get("SOLAR_LONGITUDE", "0")),
+        solar_peak_watts=float(os.environ.get("SOLAR_PEAK_WATTS", "400")),
     )
 
 

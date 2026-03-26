@@ -47,6 +47,7 @@ class TelegramBot:
         self._currency = energy_currency
         self._circuit_names = circuit_names or []
         self._db_path = db_path
+        self._solar_forecast = None  # set externally if available
         self._base = f"https://api.telegram.org/bot{token}"
         self._offset = 0
         self._thread: threading.Thread | None = None
@@ -112,6 +113,8 @@ class TelegramBot:
             "/c": self._cmd_control,
             "/circuits": self._cmd_circuits,
             "/solar": self._cmd_solar,
+            "/forecast": self._cmd_forecast,
+            "/f": self._cmd_forecast,
             "/cost": self._cmd_cost,
         }
         handler = handlers.get(cmd)
@@ -162,6 +165,7 @@ class TelegramBot:
             "/control — Control devices\n"
             "/circuits — Smart Panel circuits\n"
             "/solar — Solar production\n"
+            "/forecast — Solar forecast (tomorrow)\n"
             "/cost — Energy costs\n"
             "/help — This message"
         )
@@ -456,6 +460,36 @@ class TelegramBot:
             f"📆 Today: *{grid_today_kwh:.1f} kWh* = *{self._currency}{cost_today:.2f}*"
             f"{monthly_str}"
         )
+
+    def _cmd_forecast(self) -> None:
+        if not self._solar_forecast:
+            self._send("Solar forecast not configured.\nSet SOLAR\\_LATITUDE and SOLAR\\_LONGITUDE in .env")
+            return
+        today = self._solar_forecast.get_forecast()
+        tomorrow = self._solar_forecast.get_tomorrow()
+        lines = ["🔮 *Solar Forecast*\n"]
+
+        for label, fc in [("Today", today), ("Tomorrow", tomorrow)]:
+            if not fc:
+                lines.append(f"*{label}*: No data")
+                continue
+            lines.append(
+                f"*{label}*\n"
+                f"  ☀️ Expected: *{fc['total_kwh']} kWh*\n"
+                f"  ⚡ Peak: {fc['peak_watts']}W\n"
+                f"  ☁️ Cloud: {fc['avg_cloud']}%\n"
+                f"  🌅 {fc['sunrise']} → 🌇 {fc['sunset']}"
+            )
+            if self._energy_rate and fc['total_kwh'] > 0:
+                saved = fc['total_kwh'] * self._energy_rate
+                lines.append(f"  💰 Est. savings: {self._currency}{saved:.2f}")
+            lines.append("")
+
+        rec = self._solar_forecast.get_recommendation()
+        if rec:
+            lines.append(f"\n{rec}")
+
+        self._send("\n".join(lines))
 
     # ------------------------------------------------------------------
     # Helpers

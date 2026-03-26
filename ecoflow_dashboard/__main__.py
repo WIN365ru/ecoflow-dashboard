@@ -151,6 +151,7 @@ def main() -> None:
             mqtt_client, device_types, device_names,
             config.telegram_token, config.telegram_chat_id,
             energy_rate=config.energy_rate,
+            energy_rate_night=config.energy_rate_night,
             energy_currency=config.energy_currency,
             db_path=args.db,
         )
@@ -172,8 +173,22 @@ def main() -> None:
             circuit_names=config.circuit_names,
             db_path=args.db,
         )
+        if solar_forecast:
+            tg_bot._solar_forecast = solar_forecast
         tg_bot.start()
         console.print("[dim]Telegram bot commands enabled[/]")
+
+    # Start solar forecast
+    solar_forecast = None
+    if config.latitude and config.longitude:
+        from .solar_forecast import SolarForecast
+        solar_forecast = SolarForecast(
+            config.latitude, config.longitude,
+            panel_watts_peak=config.solar_peak_watts,
+            alert_callback=alerter._send if alerter else None,
+        )
+        solar_forecast.start()
+        console.print(f"[dim]Solar forecast enabled ({config.latitude}, {config.longitude})[/]")
 
     # Start charge scheduler
     scheduler = None
