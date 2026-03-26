@@ -824,6 +824,8 @@ function buildDeltaPro(sn, name, d) {
       <span class="stat-label">PV Voltage</span><span class="stat-value">${pvVol>0?pvVol.toFixed(1)+' V':'--'}</span>
       <span class="stat-label">PV Current</span><span class="stat-value">${pvAmp>0?pvAmp.toFixed(2)+' A':'--'}</span>
       <span class="stat-label">PV Power (V×A)</span><span class="stat-value">${pvVol*pvAmp>0?(pvVol*pvAmp).toFixed(1)+' W':'--'}</span>
+      ${solarIn > 1 && !acIn ? `<span class="stat-label">MPPT Efficiency</span><span class="stat-value" style="color:var(${dcBus/solarIn>=0.95?'--green':dcBus/solarIn>=0.85?'--yellow':'--red'})">${(dcBus/solarIn*100).toFixed(0)}%</span>
+      <span class="stat-label">Solar → Battery</span><span class="stat-value" style="color:var(${Math.abs(current)*volts/solarIn>=0.7?'--green':'--yellow'})">${current>0?(Math.abs(current)*volts/solarIn*100).toFixed(0)+'% ('+Math.round(current*volts)+'W)':'--'}</span>` : ''}
       <span class="stat-label">Source</span><span class="stat-value">${mpptChgType}</span>
       <span class="stat-label">MPPT Hours</span><span class="stat-value">${mpptUsedH>0?mpptUsedH+'h':'--'}</span>
       ${mpptFault?'<span class="stat-label">Fault</span><span class="stat-value" style="color:var(--red)">Code '+mpptFault+'</span>':''}
