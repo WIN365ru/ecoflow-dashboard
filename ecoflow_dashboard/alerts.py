@@ -89,6 +89,9 @@ class AlertManager:
         # Above 20%: notify every 20% (80, 60, 40, 20)
         # Below 20%: notify every 5% (15, 10, 5)
         self._discharge_milestones: dict[str, int] = {}
+        # Solar charge milestone tracking: {sn: last_notified_milestone}
+        # Notify at 50%, 80%, 90%, 100%
+        self._solar_charge_milestones: dict[str, int] = {}
 
     def start(self) -> None:
         # Send startup notification with device summary and current status
@@ -283,6 +286,25 @@ class AlertManager:
             # Reset milestones when not discharging
             if sn in self._discharge_milestones and self._discharge_milestones[sn] < 100:
                 self._discharge_milestones[sn] = 100
+
+        # ── Solar charge milestones (50%, 80%, 90%, 100%) ──
+        solar_watts = self._get_float(data, "mppt.inWatts") / 10
+        is_solar_charging = solar_watts > 5 and total_in > total_out
+
+        if is_solar_charging:
+            milestone = self._get_solar_charge_milestone(sn, soc)
+            if milestone is not None:
+                time_str = f"\nFull in: {self._fmt_time(chg_time)}" if chg_time > 0 else ""
+                self._send(
+                    f"☀️ *SOLAR CHARGED TO {milestone}%*\n{label}"
+                    f"\nSOC: {int(soc)}% — Solar: {solar_watts:.0f}W{time_str}"
+                )
+        else:
+            # Reset when not solar charging
+            if sn in self._solar_charge_milestones:
+                last = self._solar_charge_milestones[sn]
+                if soc < last - 5:  # SOC dropped, reset for next solar session
+                    self._solar_charge_milestones[sn] = 0
 
         # ── Battery full ──
         if _env_bool("ALERT_BATTERY_FULL") and soc >= 100 and prev_soc < 100 and prev:
@@ -480,6 +502,20 @@ class AlertManager:
                 lines.append("")
 
         return "\n".join(lines)
+
+    def _get_solar_charge_milestone(self, sn: str, soc: float) -> int | None:
+        """Return SOC milestone if crossed while solar charging.
+        Milestones: 50, 80, 90, 100
+        """
+        milestones = [50, 80, 90, 100]
+        last = self._solar_charge_milestones.get(sn, 0)
+
+        for m in milestones:
+            if soc >= m and m > last:
+                self._solar_charge_milestones[sn] = m
+                return m
+
+        return None
 
     @staticmethod
     def _fmt_time(minutes: float) -> str:
