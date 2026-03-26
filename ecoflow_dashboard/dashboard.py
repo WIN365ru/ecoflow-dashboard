@@ -237,6 +237,78 @@ def _build_delta_pro_panel(sn: str, data: dict, name: str, device_type: str = DE
         Text.from_markup(f"[bold red]{_fmt_watts(total_out)}[/]{eff_str}") if total_out else Text(_fmt_watts(0), style="dim"),
     )
 
+    # ── Solar / MPPT section ──
+    mppt_in_vol = _get(data, "mppt.inVol")
+    mppt_in_amp = _get(data, "mppt.inAmp")
+    mppt_out_vol = _get(data, "mppt.outVol")
+    mppt_out_amp = _get(data, "mppt.outAmp")
+    mppt_chg_type = int(_get(data, "mppt.chgType"))
+    mppt_xt60_type = int(_get(data, "mppt.xt60ChgType"))
+    mppt_cfg_dc_cur = _get(data, "mppt.cfgDcChgCurrent")
+    mppt_car_out_w = _get(data, "mppt.carOutWatts")
+    mppt_car_out_v = _get(data, "mppt.carOutVol")
+    mppt_car_out_a = _get(data, "mppt.carOutAmp")
+    mppt_12v_w = _get(data, "mppt.dcdc12vWatts")
+    mppt_12v_v = _get(data, "mppt.dcdc12vVol")
+    mppt_12v_a = _get(data, "mppt.dcdc12vAmp")
+    mppt_fault = int(_get(data, "mppt.faultCode"))
+    mppt_used_time = _get(data, "pd.mpptUsedTime")
+    solar_lifetime = _get(data, "pd.chgSunPower")
+
+    # Normalize units: decivolts → V, deciamps → A
+    if mppt_in_vol > 500:
+        mppt_in_vol /= 100
+    elif mppt_in_vol > 5:
+        mppt_in_vol /= 10
+    if mppt_in_amp > 500:
+        mppt_in_amp /= 100
+    elif mppt_in_amp > 50:
+        mppt_in_amp /= 10
+    if mppt_out_vol > 500:
+        mppt_out_vol /= 10
+    if mppt_out_amp > 500:
+        mppt_out_amp /= 10
+
+    # Only show solar section if there's meaningful data
+    has_solar = solar_in > 0 or mppt_in_vol > 1 or solar_lifetime > 0
+    if has_solar:
+        solar_t = Table.grid(padding=(0, 2))
+        solar_t.add_column(min_width=16)
+        solar_t.add_column(min_width=10, justify="right")
+        solar_t.add_column(min_width=16)
+        solar_t.add_column(min_width=10, justify="right")
+
+        solar_t.add_row(
+            Text("PV Input", style="dim"),
+            Text.from_markup(f"[green]{_fmt_watts(solar_in)}[/]") if solar_in else Text("0 W", style="dim"),
+            Text("PV Voltage", style="dim"),
+            Text(f"{mppt_in_vol:.1f} V") if mppt_in_vol > 0 else Text("--"),
+        )
+        solar_t.add_row(
+            Text("PV Current", style="dim"),
+            Text(f"{mppt_in_amp:.1f} A") if mppt_in_amp > 0 else Text("--"),
+            Text("MPPT Out", style="dim"),
+            Text(f"{mppt_out_vol:.1f}V {mppt_out_amp:.1f}A") if mppt_out_vol > 0 else Text("--"),
+        )
+        chg_types = {0: "Off", 1: "Solar", 2: "AC", 3: "AC+Solar"}
+        chg_str = chg_types.get(mppt_chg_type, str(mppt_chg_type))
+        max_dc_a = mppt_cfg_dc_cur / 1000 if mppt_cfg_dc_cur > 100 else mppt_cfg_dc_cur
+        solar_t.add_row(
+            Text("Charge Source", style="dim"), Text(chg_str),
+            Text("Max DC Current", style="dim"), Text(f"{max_dc_a:.0f} A"),
+        )
+        if solar_lifetime > 0:
+            used_hrs = mppt_used_time / 3600 if mppt_used_time > 0 else 0
+            solar_t.add_row(
+                Text("Lifetime Solar", style="dim"), Text(_fmt_wh(solar_lifetime), style="green"),
+                Text("MPPT Hours", style="dim"), Text(f"{used_hrs:.0f}h") if used_hrs > 0 else Text("--"),
+            )
+        if mppt_fault:
+            solar_t.add_row(
+                Text("MPPT Fault", style="dim"), Text(f"Code {mppt_fault}", style="bold red"),
+                Text("", style="dim"), Text(""),
+            )
+
     # Charge / Discharge time — use power flow to decide, not just timers
     chg = _get(data, "ems.chgRemainTime")
     dsg = _get(data, "ems.dsgRemainTime")
@@ -367,15 +439,23 @@ def _build_delta_pro_panel(sn: str, data: dict, name: str, device_type: str = DE
             Text("AC Discharged", style="dim"), Text(_fmt_wh(dsg_ac), style="red"),
             Text("DC Discharged", style="dim"), Text(_fmt_wh(dsg_dc), style="red"),
         )
+        elements = [bar, "", t]
+        if has_solar:
+            elements.extend(["", Text.from_markup("[dim]Solar / MPPT[/]"), solar_t])
+        elements.extend(["", stats, "", net_fw, "", Text.from_markup("[dim]Lifetime Energy[/]"), lt])
         return Panel(
-            Group(bar, "", t, "", stats, "", net_fw, "", Text.from_markup("[dim]Lifetime Energy[/]"), lt),
+            Group(*elements),
             title=panel_title,
             subtitle=panel_subtitle,
             border_style="blue",
         )
 
+    elements = [bar, "", t]
+    if has_solar:
+        elements.extend(["", Text.from_markup("[dim]Solar / MPPT[/]"), solar_t])
+    elements.extend(["", stats, "", net_fw])
     return Panel(
-        Group(bar, "", t, "", stats, "", net_fw),
+        Group(*elements),
         title=panel_title,
         subtitle=panel_subtitle,
         border_style="blue",

@@ -487,6 +487,17 @@ function buildDeltaPro(sn, name, d) {
   const invFw = d['inv.sysVer'] || ''; const mpptFw = d['mppt.swVer'] || '';
   const acFreq = g(d,'inv.cfgAcOutFreq') ? '50Hz' : '60Hz';
   const acVolt = g(d,'inv.cfgAcOutVoltage') / 1000;
+  // Solar / MPPT
+  let pvVol = g(d,'mppt.inVol'); pvVol = pvVol > 500 ? pvVol/100 : pvVol > 5 ? pvVol/10 : pvVol;
+  let pvAmp = g(d,'mppt.inAmp'); pvAmp = pvAmp > 500 ? pvAmp/100 : pvAmp > 50 ? pvAmp/10 : pvAmp;
+  let mpptOutV = g(d,'mppt.outVol'); mpptOutV = mpptOutV > 500 ? mpptOutV/10 : mpptOutV;
+  let mpptOutA = g(d,'mppt.outAmp'); mpptOutA = mpptOutA > 500 ? mpptOutA/10 : mpptOutA;
+  const chgTypes = {0:'Off',1:'Solar',2:'AC',3:'AC+Solar'};
+  const mpptChgType = chgTypes[g(d,'mppt.chgType')] || '--';
+  const mpptFault = g(d,'mppt.faultCode');
+  const mpptUsed = g(d,'pd.mpptUsedTime');
+  const mpptUsedH = mpptUsed > 0 ? Math.round(mpptUsed/3600) : 0;
+  const hasSolar = solarIn > 0 || pvVol > 1 || chgSun > 0;
 
   return `<div class="card">
     <div class="card-title">Delta Pro <span style="color:var(--dim);font-size:11px">(${sn.slice(-6)})</span></div>
@@ -494,7 +505,7 @@ function buildDeltaPro(sn, name, d) {
     <div class="bar-bg"><div class="bar-fill bar-${c}" style="width:${Math.min(100,Math.max(0,soc))}%"></div></div>
     <div class="health health-${sohC}">Health: ${Math.round(soh)}% (${sohLabel}) &nbsp; ${remainWh>0?remainWh.toFixed(1)+' / '+fullWh.toFixed(1)+' kWh':''}</div>
     <div class="stats">
-      <span class="stat-label">Solar In</span><span class="stat-value stat-green">${fmtW(solarIn)}</span>
+      <span class="stat-label">Solar In</span><span class="stat-value stat-green">${fmtW(solarIn)}${pvVol>1?' <span style="color:var(--dim)">('+pvVol.toFixed(1)+'V '+pvAmp.toFixed(1)+'A)</span>':''}</span>
       <span class="stat-label">AC In</span><span class="stat-value stat-green">${fmtW(acIn)}${acIn>0?' ('+Math.round(acVolt)+'V '+acFreq+')':''}</span>
       <span class="stat-label">AC Out</span><span class="stat-value stat-red">${fmtW(acOut)}</span>
       <span class="stat-label">12V/Car</span><span class="stat-value stat-red">${fmtW(car)}</span>
@@ -514,6 +525,15 @@ function buildDeltaPro(sn, name, d) {
       <span class="stat-label">Fan</span><span class="stat-value">${fanLvl?'ON (Lvl'+fanLvl+')':'Off'}</span>
       <span class="stat-label">Beep</span><span class="stat-value">${beep?'OFF':'ON'}</span>
     </div>
+    ${hasSolar?`<div class="section-title">Solar / MPPT</div><div class="stats">
+      <span class="stat-label">PV Input</span><span class="stat-value stat-green">${fmtW(solarIn)}</span>
+      <span class="stat-label">PV Voltage</span><span class="stat-value">${pvVol>0?pvVol.toFixed(1)+' V':'--'}</span>
+      <span class="stat-label">PV Current</span><span class="stat-value">${pvAmp>0?pvAmp.toFixed(1)+' A':'--'}</span>
+      <span class="stat-label">MPPT Out</span><span class="stat-value">${mpptOutV>0?mpptOutV.toFixed(1)+'V '+mpptOutA.toFixed(1)+'A':'--'}</span>
+      <span class="stat-label">Source</span><span class="stat-value">${mpptChgType}</span>
+      <span class="stat-label">MPPT Hours</span><span class="stat-value">${mpptUsedH>0?mpptUsedH+'h':'--'}</span>
+      ${mpptFault?'<span class="stat-label">Fault</span><span class="stat-value" style="color:var(--red)">Code '+mpptFault+'</span>':''}
+    </div>`:''}
     ${chgAc||chgSun||dsgAc||dsgDc?`<div class="section-title">Lifetime Energy</div><div class="stats">
       <span class="stat-label">AC Charged</span><span class="stat-value stat-green">${fmtWh(chgAc)}</span>
       <span class="stat-label">Solar Charged</span><span class="stat-value stat-green">${fmtWh(chgSun)}</span>

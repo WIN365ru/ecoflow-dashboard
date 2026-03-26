@@ -40,6 +40,13 @@ DELTA_PRO_KEYS = [
     "pd.usb1Watts",
     "pd.usb2Watts",
     "pd.carWatts",
+    # Solar / MPPT
+    "mppt.inVol",
+    "mppt.inAmp",
+    "mppt.outVol",
+    "mppt.outAmp",
+    "mppt.chgType",
+    "mppt.mpptTemp",
 ]
 
 SHP_KEYS = [
