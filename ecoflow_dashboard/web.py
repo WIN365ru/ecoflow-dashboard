@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
 import sqlite3
@@ -60,6 +62,32 @@ app = Flask(__name__)
 @app.route("/")
 def index() -> str:
     return HTML_PAGE
+
+
+@app.route("/manifest.json")
+def manifest() -> Response:
+    return Response(json.dumps({
+        "name": "EcoFlow Dashboard",
+        "short_name": "EcoFlow",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#0d1117",
+        "theme_color": "#0d1117",
+        "icons": [
+            {"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml"},
+        ],
+    }), content_type="application/json")
+
+
+@app.route("/icon.svg")
+def icon_svg() -> Response:
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="192" height="192">'
+        '<rect width="100" height="100" rx="20" fill="#0d1117"/>'
+        '<text x="50" y="50" text-anchor="middle" dominant-baseline="central" font-size="64">⚡</text>'
+        '</svg>'
+    )
+    return Response(svg, content_type="image/svg+xml")
 
 
 @app.route("/api/devices")
@@ -288,6 +316,134 @@ def api_outages() -> Response:
         return Response(json.dumps({"error": str(e)}), status=500, content_type="application/json")
 
 
+@app.route("/api/export/csv")
+def api_export_csv() -> Response:
+    """Export historical data as CSV."""
+    if not _db_path:
+        return Response("No database", status=404)
+    sn = request.args.get("sn", "")
+    start = request.args.get("start", "")
+    end = request.args.get("end", "")
+    hours = request.args.get("hours", "24")
+    if not sn:
+        return Response("sn required", status=400)
+
+    if start and end:
+        time_clause = "AND timestamp >= ? AND timestamp <= ?"
+        time_params = (start, end + "T23:59:59")
+    else:
+        cutoff = (datetime.now() - timedelta(hours=int(hours))).isoformat(timespec="seconds")
+        time_clause = "AND timestamp >= ?"
+        time_params = (cutoff,)
+
+    try:
+        with sqlite3.connect(_db_path) as conn:
+            rows = conn.execute(
+                f"SELECT timestamp, key, value FROM snapshots WHERE device_sn=? "
+                f"{time_clause} ORDER BY timestamp",
+                (sn, *time_params),
+            ).fetchall()
+
+        # Pivot: group by timestamp, keys as columns
+        data: dict[str, dict] = {}
+        all_keys: set[str] = set()
+        for ts, key, val in rows:
+            if ts not in data:
+                data[ts] = {"timestamp": ts}
+            data[ts][key] = val
+            all_keys.add(key)
+
+        cols = ["timestamp"] + sorted(all_keys)
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=cols, extrasaction="ignore")
+        writer.writeheader()
+        for ts in sorted(data):
+            writer.writerow(data[ts])
+
+        fname = f"ecoflow_{sn[-6:]}_{start or 'last' + hours + 'h'}.csv"
+        return Response(
+            output.getvalue(),
+            content_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        )
+    except Exception as e:
+        return Response(str(e), status=500)
+
+
+@app.route("/api/solar")
+def api_solar() -> Response:
+    """Solar analytics: daily generation, self-consumption, payback."""
+    if not _db_path:
+        return Response(json.dumps([]), content_type="application/json")
+    sn = request.args.get("sn", "")
+    days = int(request.args.get("days", "30"))
+    if not sn:
+        return Response(json.dumps({"error": "sn required"}), status=400, content_type="application/json")
+
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
+    try:
+        with sqlite3.connect(_db_path) as conn:
+            # Daily solar generation (average power × samples = energy estimate)
+            solar_rows = conn.execute(
+                "SELECT DATE(timestamp) as day, AVG(value) as avg_w, COUNT(*) as samples "
+                "FROM snapshots WHERE device_sn=? AND key='mppt.inWatts' "
+                "AND timestamp >= ? AND value > 0 GROUP BY day ORDER BY day",
+                (sn, cutoff),
+            ).fetchall()
+
+            # Lifetime solar
+            lifetime = conn.execute(
+                "SELECT MAX(value) FROM snapshots WHERE device_sn=? AND key='pd.chgSunPower'",
+                (sn,),
+            ).fetchone()
+            lifetime_kwh = (lifetime[0] or 0) / 1000
+
+            # Grid consumption for same period (from SHP if available)
+            grid_rows = conn.execute(
+                "SELECT DATE(timestamp) as day, MAX(value) as grid_wh "
+                "FROM snapshots WHERE key='gridDayWatth' "
+                "AND timestamp >= ? GROUP BY day ORDER BY day",
+                (cutoff,),
+            ).fetchall()
+            grid_map = {r[0]: r[1] / 1000 for r in grid_rows}  # kWh
+
+            # Calculate daily data
+            log_interval = 300  # default 5 min
+            daily = []
+            total_solar_kwh = 0
+            total_grid_kwh = 0
+            for day, avg_w, samples in solar_rows:
+                # Energy = avg_watts × hours_of_samples
+                solar_kwh = avg_w * samples * log_interval / 3_600_000  # W × s → kWh
+                grid_kwh = grid_map.get(day, 0)
+                total_solar_kwh += solar_kwh
+                total_grid_kwh += grid_kwh
+                self_ratio = solar_kwh / (solar_kwh + grid_kwh) * 100 if (solar_kwh + grid_kwh) > 0 else 0
+                daily.append({
+                    "date": day,
+                    "solar_kwh": round(solar_kwh, 2),
+                    "grid_kwh": round(grid_kwh, 2),
+                    "self_consumption": round(self_ratio, 1),
+                })
+
+            money_saved = total_solar_kwh * _energy_rate if _energy_rate > 0 else 0
+
+            return Response(json.dumps({
+                "daily": daily,
+                "total_solar_kwh": round(total_solar_kwh, 2),
+                "total_grid_kwh": round(total_grid_kwh, 2),
+                "lifetime_solar_kwh": round(lifetime_kwh, 2),
+                "money_saved": round(money_saved, 2),
+                "currency": _energy_currency,
+                "self_consumption_avg": round(
+                    total_solar_kwh / (total_solar_kwh + total_grid_kwh) * 100
+                    if (total_solar_kwh + total_grid_kwh) > 0 else 0, 1
+                ),
+            }), content_type="application/json")
+    except Exception as e:
+        return Response(json.dumps({"error": str(e)}), status=500, content_type="application/json")
+
+
 def _live_collector() -> None:
     """Background thread collecting live data points every 2 seconds."""
     while True:
@@ -365,7 +521,11 @@ HTML_PAGE = r"""<!DOCTYPE html>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>EcoFlow Dashboard</title>
+<meta name="theme-color" content="#0d1117">
+<meta name="apple-mobile-web-app-title" content="EcoFlow">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="manifest" href="/manifest.json">
 <style>
   :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #e6edf3;
           --dim: #8b949e; --green: #3fb950; --red: #f85149; --yellow: #d29922;
@@ -470,6 +630,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
       <input type="date" id="hist-end" class="btn" style="color:#e6edf3;background:#21262d;border:1px solid #30363d">
       <button class="btn" onclick="loadHistory()" style="background:#238636">Go</button>
     </span>
+    <button id="csv-btn" class="btn" style="display:none" onclick="exportCSV()">📥 CSV</button>
     <span id="hist-info" style="display:none;color:#8b949e;font-size:0.8em"></span>
     <select id="chart-device" class="btn" onchange="chartDeviceChanged()"></select>
   </div>
@@ -506,6 +667,20 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <span class="card-title" style="margin:0">Energy Flow</span>
   </div>
   <canvas id="chart-flow" height="200"></canvas>
+</div>
+
+<!-- Solar Analytics -->
+<div class="card" style="margin-top:8px" id="solar-card">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px">
+    <span class="card-title" style="margin:0">☀ Solar Analytics</span>
+    <select id="solar-device" class="btn" onchange="loadSolar()"></select>
+    <select id="solar-days" class="btn" onchange="loadSolar()">
+      <option value="7">7 days</option><option value="30" selected>30 days</option>
+      <option value="90">90 days</option><option value="365">1 year</option>
+    </select>
+  </div>
+  <div id="solar-summary" style="font-size:12px;margin-bottom:8px"></div>
+  <canvas id="chart-solar" height="150"></canvas>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -849,6 +1024,7 @@ function setChartMode(mode) {
   document.getElementById('hist-hours').style.display = mode === 'history' ? '' : 'none';
   document.getElementById('custom-range').style.display = 'none';
   document.getElementById('hist-info').style.display = mode === 'history' ? '' : 'none';
+  document.getElementById('csv-btn').style.display = mode === 'history' ? '' : 'none';
   if (mode === 'history') { fetchHistRange(); loadHistory(); }
 }
 
@@ -1175,17 +1351,89 @@ function updateFlowChart() {
   chartFlow.update();
 }
 
+// ── CSV Export ──
+function exportCSV() {
+  if (!chartSn) return;
+  const sel = document.getElementById('hist-hours').value;
+  let url;
+  if (sel === 'custom') {
+    const start = document.getElementById('hist-start').value;
+    const end = document.getElementById('hist-end').value;
+    url = `/api/export/csv?sn=${chartSn}&start=${start}&end=${end}`;
+  } else {
+    url = `/api/export/csv?sn=${chartSn}&hours=${sel}`;
+  }
+  window.location.href = url;
+}
+
+// ── Solar Analytics ──
+let chartSolar = null;
+
+function initSolarChart() {
+  const ctx = document.getElementById('chart-solar');
+  if (!ctx) return;
+  chartSolar = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: [], datasets: [] },
+    options: {
+      ...chartOpts,
+      scales: {
+        ...chartOpts.scales,
+        y: { ...chartOpts.scales.y, title: { display: true, text: 'kWh', color: '#8b949e' } }
+      }
+    }
+  });
+  // Populate device selector (Delta Pros only)
+  const sel = document.getElementById('solar-device');
+  const deltas = Object.entries(allDevicesList).filter(([s,v]) => v.type.includes('delta'));
+  sel.innerHTML = deltas.map(([sn,v]) => `<option value="${sn}">Delta Pro (${sn.slice(-6)})</option>`).join('');
+  if (deltas.length) loadSolar();
+}
+
+async function loadSolar() {
+  const sn = document.getElementById('solar-device').value;
+  const days = document.getElementById('solar-days').value;
+  if (!sn || !chartSolar) return;
+  try {
+    const r = await fetch(`/api/solar?sn=${sn}&days=${days}`);
+    const j = await r.json();
+    const daily = j.daily || [];
+    if (!daily.length) {
+      document.getElementById('solar-summary').innerHTML = '<span style="color:var(--dim)">No solar data yet.</span>';
+      chartSolar.data = { labels: [], datasets: [] };
+      chartSolar.update();
+      return;
+    }
+    chartSolar.data = {
+      labels: daily.map(d => d.date),
+      datasets: [
+        { label: 'Solar (kWh)', data: daily.map(d => d.solar_kwh), backgroundColor: '#d29922' },
+        { label: 'Grid (kWh)', data: daily.map(d => d.grid_kwh), backgroundColor: '#30363d' },
+      ]
+    };
+    chartSolar.update();
+
+    const cur = j.currency || '$';
+    let html = `<b>Total Solar:</b> ${j.total_solar_kwh} kWh · `;
+    html += `<b>Lifetime:</b> ${j.lifetime_solar_kwh} kWh · `;
+    html += `<b>Self-consumption:</b> ${j.self_consumption_avg}%`;
+    if (j.money_saved > 0) html += ` · <b style="color:var(--green)">Saved: ${cur}${j.money_saved.toFixed(2)}</b>`;
+    document.getElementById('solar-summary').innerHTML = html;
+  } catch(e) { console.error('solar error', e); }
+}
+
 // Init charts after Chart.js loads
 setTimeout(() => {
   initCharts();
   initDegChart();
   initFlowChart();
+  initSolarChart();
   loadOutages();
   setInterval(() => {
     if (chartMode === 'live') updateLiveCharts();
     updateFlowChart();
   }, 3000);
-  setInterval(loadOutages, 60000); // refresh outages every minute
+  setInterval(loadOutages, 60000);
 }, 500);
 </script>
 </body>

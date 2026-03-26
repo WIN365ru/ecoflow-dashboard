@@ -140,6 +140,15 @@ def main() -> None:
         alerter.start()
         console.print("[dim]Telegram alerts enabled[/]")
 
+    # Start charge scheduler
+    scheduler = None
+    from .scheduler import ChargeScheduler
+    sched = ChargeScheduler(mqtt_client, device_types, alerter=alerter)
+    if sched.enabled:
+        sched.start()
+        scheduler = sched
+        console.print("[dim]Charge scheduler enabled[/]")
+
     # Start data logger
     data_logger: DataLogger | None = None
     if not args.no_log:
@@ -161,6 +170,8 @@ def main() -> None:
         except KeyboardInterrupt:
             pass
         finally:
+            if scheduler:
+                scheduler.stop()
             if alerter:
                 alerter.stop()
             if data_logger:
@@ -181,6 +192,8 @@ def main() -> None:
         except KeyboardInterrupt:
             pass
         finally:
+            if scheduler:
+                scheduler.stop()
             if alerter:
                 alerter.stop()
             if data_logger:
