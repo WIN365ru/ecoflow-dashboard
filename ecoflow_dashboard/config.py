@@ -21,6 +21,9 @@ class Config:
     password: str = ""
     # Common
     device_sns: list[str] | None = None
+    # Telegram alerts
+    telegram_token: str = ""
+    telegram_chat_id: str = ""
 
 
 def load_config(env_file: str = ".env") -> Config:
@@ -65,4 +68,6 @@ def load_config(env_file: str = ".env") -> Config:
         email=email,
         password=password,
         device_sns=device_sns,
+        telegram_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
+        telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID", ""),
     )

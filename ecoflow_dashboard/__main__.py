@@ -126,6 +126,17 @@ def main() -> None:
         mqtt_client.stop()
         return
 
+    # Start Telegram alerts
+    alerter = None
+    if config.telegram_token and config.telegram_chat_id:
+        from .alerts import AlertManager
+        alerter = AlertManager(
+            mqtt_client, device_types, device_names,
+            config.telegram_token, config.telegram_chat_id,
+        )
+        alerter.start()
+        console.print("[dim]Telegram alerts enabled[/]")
+
     # Start data logger
     data_logger: DataLogger | None = None
     if not args.no_log:
@@ -145,6 +156,8 @@ def main() -> None:
         except KeyboardInterrupt:
             pass
         finally:
+            if alerter:
+                alerter.stop()
             if data_logger:
                 data_logger.stop()
             mqtt_client.stop()
@@ -161,6 +174,8 @@ def main() -> None:
         except KeyboardInterrupt:
             pass
         finally:
+            if alerter:
+                alerter.stop()
             if data_logger:
                 data_logger.stop()
             mqtt_client.stop()
