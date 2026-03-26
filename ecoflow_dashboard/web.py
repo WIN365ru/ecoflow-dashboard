@@ -749,7 +749,7 @@ function buildDeltaPro(sn, name, d) {
   const timeVal = isChg ? fmtTime(chg) : totalOut > 0 ? fmtTime(dsg) : '--';
   const battTemp = Math.round(g(d,'bmsMaster.temp'));
   const invTemp = Math.round(g(d,'inv.outTemp'));
-  const dcBus = g(d,'mppt.outWatts');
+  const dcBus = g(d,'mppt.outWatts') / 10; // deciWatts
   const acEnabled = g(d,'inv.cfgAcEnabled');
   const dcEnabled = g(d,'mppt.carState');
   const minCell = g(d,'bmsMaster.minCellVol'); const maxCell = g(d,'bmsMaster.maxCellVol');

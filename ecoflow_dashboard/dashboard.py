@@ -215,7 +215,7 @@ def _build_delta_pro_panel(sn: str, data: dict, name: str, device_type: str = DE
 
     # System efficiency: battery power drawn vs useful output
     # Power drawn from battery = |current| * voltage
-    mppt_out = _get(data, "mppt.outWatts")
+    mppt_out = _get(data, "mppt.outWatts") / 10  # deciWatts like inWatts
     batt_amp_raw = _get(data, "bmsMaster.amp")
     batt_vol_raw = _get(data, "bmsMaster.vol")
     eff_str = ""
