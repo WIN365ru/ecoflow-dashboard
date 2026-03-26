@@ -36,14 +36,16 @@ class ChargeScheduler:
         self._charge_stop = os.environ.get("SCHEDULE_CHARGE_STOP", "")   # "06:00"
         self._charge_active = False
 
-        # SOC limiter (Delta Pro)
-        self._max_soc = int(os.environ.get("SCHEDULE_MAX_SOC", "0"))  # 0 = disabled
+        # SOC limiter (Delta Pro) — separate limits for grid vs solar
+        self._max_soc_grid = int(os.environ.get("SCHEDULE_MAX_SOC_GRID",
+                                 os.environ.get("SCHEDULE_MAX_SOC", "0")))  # grid limit
+        self._max_soc_solar = int(os.environ.get("SCHEDULE_MAX_SOC_SOLAR", "100"))  # solar limit
         self._charge_paused: dict[str, bool] = {}  # sn → is_paused
         self._default_charge_watts = int(os.environ.get("SCHEDULE_CHARGE_WATTS", "2500"))
 
     @property
     def enabled(self) -> bool:
-        return bool(self._charge_start or self._max_soc)
+        return bool(self._charge_start or self._max_soc_grid)
 
     def start(self) -> None:
         if not self.enabled:
@@ -53,8 +55,12 @@ class ChargeScheduler:
         rules = []
         if self._charge_start:
             rules.append(f"Grid charge {self._charge_start}-{self._charge_stop}")
-        if self._max_soc:
-            rules.append(f"Max SOC {self._max_soc}%")
+        if self._max_soc_grid:
+            rules.append(f"Grid SOC limit {self._max_soc_grid}%")
+        if self._max_soc_solar < 100:
+            rules.append(f"Solar SOC limit {self._max_soc_solar}%")
+        else:
+            rules.append(f"Solar: charge to 100%")
         log.info("Scheduler started: %s", ", ".join(rules))
 
     def stop(self) -> None:
@@ -68,7 +74,7 @@ class ChargeScheduler:
             try:
                 if self._charge_start:
                     self._check_time_of_use()
-                if self._max_soc:
+                if self._max_soc_grid:
                     self._check_soc_limit()
             except Exception:
                 log.exception("Scheduler check failed")
@@ -120,7 +126,11 @@ class ChargeScheduler:
             self._notify(f"Grid charging DISABLED (outside {self._charge_start}-{self._charge_stop})")
 
     def _check_soc_limit(self) -> None:
-        """Pause Delta Pro charging when SOC reaches max, resume when below threshold."""
+        """Pause/resume charging based on source-aware SOC limits.
+
+        Grid charging: limited to SCHEDULE_MAX_SOC_GRID (default 80%)
+        Solar charging: limited to SCHEDULE_MAX_SOC_SOLAR (default 100%)
+        """
         for sn, dtype in self._device_types.items():
             if "delta" not in dtype:
                 continue
@@ -139,17 +149,52 @@ class ChargeScheduler:
                     except (TypeError, ValueError):
                         continue
 
+            # Detect charging source
+            solar_watts = float(data.get("mppt.inWatts", 0) or 0)
+            ac_in_watts = float(data.get("inv.inputWatts", 0) or 0)
+            is_solar = solar_watts > 10
+            is_grid = ac_in_watts > 10
+
+            # Choose limit based on source
+            if is_solar and not is_grid:
+                active_limit = self._max_soc_solar
+                source = "solar"
+            elif is_grid:
+                active_limit = self._max_soc_grid
+                source = "grid"
+            else:
+                active_limit = self._max_soc_grid  # default to grid limit
+                source = "idle"
+
             short_sn = sn[-6:]
             is_paused = self._charge_paused.get(sn, False)
 
-            if soc >= self._max_soc and not is_paused:
-                # Pause charging
+            if soc >= active_limit and not is_paused and (is_solar or is_grid):
+                # Pause charging — reached limit for current source
                 self._mqtt.send_command(sn, {"id": 69, "slowChgPower": 0})
                 self._charge_paused[sn] = True
-                self._notify(f"Charging PAUSED on DP {short_sn}\nSOC {soc:.0f}% reached {self._max_soc}% limit")
+                self._notify(
+                    f"Charging PAUSED on DP {short_sn}\n"
+                    f"SOC {soc:.0f}% reached {source} limit ({active_limit}%)"
+                )
 
-            elif soc < self._max_soc - 5 and is_paused:
-                # Resume charging (5% hysteresis)
-                self._mqtt.send_command(sn, {"id": 69, "slowChgPower": self._default_charge_watts})
-                self._charge_paused[sn] = False
-                self._notify(f"Charging RESUMED on DP {short_sn}\nSOC {soc:.0f}% (below {self._max_soc - 5}%)")
+            elif is_paused:
+                # Check if we should resume:
+                # 1. Source changed (was grid-limited, now solar available → higher limit)
+                # 2. SOC dropped below limit - hysteresis
+                should_resume = False
+                reason = ""
+
+                if is_solar and soc < self._max_soc_solar:
+                    # Solar available and below solar limit → resume
+                    should_resume = True
+                    reason = f"Solar active, SOC {soc:.0f}% below solar limit ({self._max_soc_solar}%)"
+                elif soc < active_limit - 5:
+                    # Below current limit with hysteresis → resume
+                    should_resume = True
+                    reason = f"SOC {soc:.0f}% below {source} limit ({active_limit - 5}%)"
+
+                if should_resume:
+                    self._mqtt.send_command(sn, {"id": 69, "slowChgPower": self._default_charge_watts})
+                    self._charge_paused[sn] = False
+                    self._notify(f"Charging RESUMED on DP {short_sn}\n{reason}")
