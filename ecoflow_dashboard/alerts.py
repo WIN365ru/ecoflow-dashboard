@@ -154,6 +154,22 @@ class AlertManager:
         # Wait for initial data
         self._stop.wait(15)
 
+        # Initialize milestones to current SOC so we don't fire on startup
+        for sn, dtype in self._device_types.items():
+            data = self._mqtt.get_device_data(sn)
+            if not data:
+                continue
+            if "delta" in dtype:
+                soc = self._get_float(data, "ems.lcdShowSoc", "bmsMaster.f32ShowSoc", "bmsMaster.soc")
+                # Set solar milestones to current level
+                for m in [50, 80, 90, 100]:
+                    if soc >= m:
+                        self._solar_charge_milestones[sn] = m
+                # Set discharge milestones to current level
+                for m in [80, 60, 40, 20, 15, 10, 5]:
+                    if soc <= m:
+                        self._discharge_milestones[sn] = m
+
         while not self._stop.is_set():
             try:
                 self._check_all()
