@@ -133,6 +133,9 @@ def main() -> None:
         alerter = AlertManager(
             mqtt_client, device_types, device_names,
             config.telegram_token, config.telegram_chat_id,
+            energy_rate=config.energy_rate,
+            energy_currency=config.energy_currency,
+            db_path=args.db,
         )
         alerter.start()
         console.print("[dim]Telegram alerts enabled[/]")
@@ -152,7 +155,8 @@ def main() -> None:
         from .web import run_web
         console.print(f"Starting web dashboard v{__version__} on http://0.0.0.0:{args.web_port}")
         try:
-            run_web(mqtt_client, device_types, device_names, port=args.web_port, db_path=args.db, alerter=alerter)
+            run_web(mqtt_client, device_types, device_names, port=args.web_port, db_path=args.db,
+                    alerter=alerter, energy_rate=config.energy_rate, energy_currency=config.energy_currency)
         except KeyboardInterrupt:
             pass
         finally:
@@ -170,7 +174,8 @@ def main() -> None:
         console.print(f"Starting dashboard v{__version__}...")
 
         try:
-            run_dashboard(mqtt_client, device_types, device_names, version_checker=version_checker, alerter=alerter)
+            run_dashboard(mqtt_client, device_types, device_names, version_checker=version_checker, alerter=alerter,
+                          energy_rate=config.energy_rate, energy_currency=config.energy_currency)
         except KeyboardInterrupt:
             pass
         finally:

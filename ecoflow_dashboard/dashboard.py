@@ -419,7 +419,8 @@ def _mah_to_wh(mah: float) -> float:
 
 
 def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HOME_PANEL,
-                     dp_data: list[tuple[str, dict]] | None = None) -> Panel:
+                     dp_data: list[tuple[str, dict]] | None = None,
+                     energy_rate: float = 0.0, energy_currency: str = "$") -> Panel:
     type_label = DEVICE_TYPE_LABELS.get(device_type, device_type)
 
     # ── Grid + Energy (compact: 2 lines) ──
@@ -445,10 +446,14 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
     info.add_column(min_width=10, justify="right")
     info.add_column(min_width=14)
     info.add_column(min_width=10, justify="right")
+    cost_txt = ""
+    if energy_rate > 0 and grid_day_wh > 0:
+        daily_cost = (grid_day_wh / 1000) * energy_rate
+        cost_txt = f" ([green]{energy_currency}{daily_cost:.2f}[/])"
     info.add_row(
         Text("Grid", style="dim"),
         Text.from_markup(f"{'[bold green]ON[/]' if grid_sta else '[bold red]OFF[/]'}{grid_v}{eps_txt}{chk_txt}"),
-        Text("Grid Today", style="dim"), Text(_fmt_wh(grid_day_wh), style="bold"),
+        Text("Grid Today", style="dim"), Text.from_markup(f"[bold]{_fmt_wh(grid_day_wh)}[/]{cost_txt}"),
         Text("Backup Today", style="dim"), Text(_fmt_wh(backup_day_wh), style="bold"),
     )
 
@@ -729,6 +734,8 @@ def build_dashboard(
     commands: dict | None = None,
     update_msg: str = "",
     alerter: object | None = None,
+    energy_rate: float = 0.0,
+    energy_currency: str = "$",
 ) -> Group:
     from . import __version__
 
@@ -774,7 +781,8 @@ def build_dashboard(
         if dtype == SMART_HOME_PANEL:
             data = mqtt_client.get_device_data(sn)
             name = device_names.get(sn, sn)
-            other_panels.append(_build_shp_panel(sn, data, name, dtype, dp_data=delta_pro_data))
+            other_panels.append(_build_shp_panel(sn, data, name, dtype, dp_data=delta_pro_data,
+                                                energy_rate=energy_rate, energy_currency=energy_currency))
 
     # Place Delta Pros side by side if there are exactly 2
     if len(delta_panels) == 2:
@@ -805,6 +813,8 @@ def run_dashboard(
     device_names: dict[str, str],
     version_checker: object | None = None,
     alerter: object | None = None,
+    energy_rate: float = 0.0,
+    energy_currency: str = "$",
 ) -> None:
     import queue as _queue
     from .controls import DeviceController, KeyboardThread
@@ -864,6 +874,8 @@ def run_dashboard(
                     commands=controller.get_commands(selected_sn),
                     update_msg=update_msg,
                     alerter=alerter,
+                    energy_rate=energy_rate,
+                    energy_currency=energy_currency,
                 ))
                 time.sleep(0.5)
     finally:

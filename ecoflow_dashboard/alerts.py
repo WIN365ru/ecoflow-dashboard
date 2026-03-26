@@ -23,6 +23,7 @@ DEFAULTS = {
     "ALERT_OFFLINE_TIMEOUT": "300",  # seconds
     "ALERT_COOLDOWN": "1800",        # 30 min between repeated alerts
     "ALERT_DAILY_SUMMARY": "20",     # Hour (0-23) to send daily summary, empty to disable
+    "ALERT_MONTHLY_REPORT": "1",     # Send monthly energy/cost report on 1st of month
 }
 
 
@@ -42,6 +43,9 @@ class AlertManager:
         device_names: dict[str, str],
         telegram_token: str,
         telegram_chat_id: str,
+        energy_rate: float = 0.0,
+        energy_currency: str = "$",
+        db_path: str = "",
     ) -> None:
         self._mqtt = mqtt_client
         self._device_types = device_types
@@ -69,9 +73,17 @@ class AlertManager:
         self._telegram_ok: bool = False
         self._telegram_error: str = ""
 
+        # Energy cost
+        self._energy_rate = energy_rate
+        self._energy_currency = energy_currency
+        self._db_path = db_path
+
         # Daily summary
         self._summary_hour = os.environ.get("ALERT_DAILY_SUMMARY", DEFAULTS["ALERT_DAILY_SUMMARY"])
         self._last_summary_date: str = ""
+        # Monthly report
+        self._monthly_enabled = _env_bool("ALERT_MONTHLY_REPORT")
+        self._last_monthly_date: str = ""
 
     def start(self) -> None:
         # Send startup notification with device summary
@@ -112,6 +124,7 @@ class AlertManager:
             try:
                 self._check_all()
                 self._check_daily_summary()
+                self._check_monthly_report()
             except Exception:
                 log.exception("Alert check failed")
             self._stop.wait(10)
@@ -267,6 +280,101 @@ class AlertManager:
         self._last_summary_date = today
         self._send(self._build_summary())
 
+    def _check_monthly_report(self) -> None:
+        """Send monthly energy/cost report on the 1st of each month."""
+        if not self._monthly_enabled or not self._db_path:
+            return
+        now = datetime.now()
+        month_key = now.strftime("%Y-%m")
+        if month_key == self._last_monthly_date:
+            return
+        if now.day != 1:
+            return
+        # Send at the same hour as daily summary
+        if self._summary_hour and now.hour != int(self._summary_hour):
+            return
+
+        self._last_monthly_date = month_key
+        self._send(self._build_monthly_report())
+
+    def _build_monthly_report(self) -> str:
+        """Build monthly energy consumption and cost report from SQLite."""
+        import sqlite3
+        now = datetime.now()
+        # Previous month
+        if now.month == 1:
+            prev_year, prev_month = now.year - 1, 12
+        else:
+            prev_year, prev_month = now.year, now.month - 1
+        month_start = f"{prev_year}-{prev_month:02d}-01"
+        month_end = f"{now.year}-{now.month:02d}-01"
+        month_name = datetime(prev_year, prev_month, 1).strftime("%B %Y")
+
+        lines = [f"📅 *Monthly Report — {month_name}*\n"]
+
+        try:
+            with sqlite3.connect(self._db_path) as conn:
+                for sn, dtype in self._device_types.items():
+                    label = self._device_label(sn)
+
+                    if "panel" in dtype:
+                        # Get daily grid consumption snapshots
+                        rows = conn.execute(
+                            "SELECT DATE(timestamp) as day, MAX(value) - MIN(value) as daily_wh "
+                            "FROM snapshots WHERE device_sn=? AND key='gridDayWatth' "
+                            "AND timestamp >= ? AND timestamp < ? "
+                            "GROUP BY day ORDER BY day",
+                            (sn, month_start, month_end),
+                        ).fetchall()
+
+                        if not rows:
+                            # Fallback: use max gridDayWatth per day
+                            rows = conn.execute(
+                                "SELECT DATE(timestamp) as day, MAX(value) as daily_wh "
+                                "FROM snapshots WHERE device_sn=? AND key='gridDayWatth' "
+                                "AND timestamp >= ? AND timestamp < ? "
+                                "GROUP BY day ORDER BY day",
+                                (sn, month_start, month_end),
+                            ).fetchall()
+
+                        total_kwh = sum(r[1] for r in rows) / 1000 if rows else 0
+                        days = len(rows)
+                        avg_kwh = total_kwh / days if days > 0 else 0
+
+                        lines.append(f"*{label}*")
+                        lines.append(f"  Grid: *{total_kwh:.1f} kWh* ({days} days)")
+                        lines.append(f"  Daily avg: {avg_kwh:.1f} kWh")
+
+                        if self._energy_rate > 0:
+                            total_cost = total_kwh * self._energy_rate
+                            avg_cost = avg_kwh * self._energy_rate
+                            lines.append(
+                                f"  Cost: *{self._energy_currency}{total_cost:.2f}* "
+                                f"(avg {self._energy_currency}{avg_cost:.2f}/day)"
+                            )
+                        lines.append("")
+
+                    elif "delta" in dtype:
+                        # Get lifetime energy change over the month
+                        for metric, lbl in [("pd.chgPowerAc", "AC Charged"), ("pd.chgSunPower", "Solar Charged")]:
+                            row = conn.execute(
+                                "SELECT MIN(value), MAX(value) FROM snapshots "
+                                "WHERE device_sn=? AND key=? AND timestamp >= ? AND timestamp < ?",
+                                (sn, metric, month_start, month_end),
+                            ).fetchone()
+                            if row and row[0] is not None and row[1] is not None:
+                                delta_kwh = (row[1] - row[0]) / 1000
+                                if delta_kwh > 0:
+                                    lines.append(f"  {lbl}: {delta_kwh:.1f} kWh")
+
+        except Exception as e:
+            lines.append(f"  _Error reading history: {e}_")
+
+        if len(lines) == 1:
+            lines.append("  No historical data available for last month.")
+
+        return "\n".join(lines)
+
     def _build_summary(self) -> str:
         """Build a daily summary message with all device stats."""
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -310,7 +418,11 @@ class AlertManager:
 
                 lines.append(f"*{label}*")
                 lines.append(f"  Grid: {'✅ ON' if grid else '❌ OFF'} — Combined: *{combined:.0f}%*")
-                lines.append(f"  Grid today: {grid_day/1000:.2f} kWh | Backup: {backup_day/1000:.2f} kWh")
+                cost_str = ""
+                if self._energy_rate > 0 and grid_day > 0:
+                    cost = (grid_day / 1000) * self._energy_rate
+                    cost_str = f" ({self._energy_currency}{cost:.2f})"
+                lines.append(f"  Grid today: {grid_day/1000:.2f} kWh{cost_str} | Backup: {backup_day/1000:.2f} kWh")
                 lines.append(f"  Current load: {total_load:.0f} W")
 
                 for i in range(2):

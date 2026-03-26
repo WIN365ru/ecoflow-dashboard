@@ -46,6 +46,8 @@ _device_names: dict[str, str] = {}
 _controller: DeviceController | None = None
 _db_path: str = ""
 _alerter: object | None = None
+_energy_rate: float = 0.0
+_energy_currency: str = "$"
 
 # Live data ring buffer: {sn: deque of {ts, key: value, ...}}
 _live_buffer: dict[str, deque] = {}
@@ -83,6 +85,7 @@ def api_devices() -> Response:
                     "latest_version": _get_latest_version(),
                     "telegram": {"enabled": _alerter is not None,
                                  "connected": getattr(_alerter, "connected", False)} if _alerter else None,
+                    "energy": {"rate": _energy_rate, "currency": _energy_currency} if _energy_rate > 0 else None,
                     "devices": result}),
         content_type="application/json",
     )
@@ -228,14 +231,18 @@ def run_web(
     port: int = 5000,
     db_path: str = "",
     alerter: object | None = None,
+    energy_rate: float = 0.0,
+    energy_currency: str = "$",
 ) -> None:
-    global _mqtt, _device_types, _device_names, _controller, _db_path, _alerter
+    global _mqtt, _device_types, _device_names, _controller, _db_path, _alerter, _energy_rate, _energy_currency
     _mqtt = mqtt_client
     _device_types = device_types
     _device_names = device_names
     _controller = DeviceController(mqtt_client, device_types)
     _db_path = db_path
     _alerter = alerter
+    _energy_rate = energy_rate
+    _energy_currency = energy_currency
 
     # Start live data collector
     collector = threading.Thread(target=_live_collector, daemon=True)
@@ -588,7 +595,7 @@ function buildSHP(sn, name, d, allDevices) {
     </div>
     <div class="stats" style="margin-top:6px">
       <span class="stat-label">Combined</span><span class="stat-value soc-${c}">${Math.round(combinedSoc)}%</span>
-      <span class="stat-label">Grid Today</span><span class="stat-value">${fmtWh(gridDay)}</span>
+      <span class="stat-label">Grid Today</span><span class="stat-value">${fmtWh(gridDay)}${energyCfg ? ' <span style="color:var(--green)">'+energyCfg.currency+(gridDay/1000*energyCfg.rate).toFixed(2)+'</span>':''}</span>
       <span class="stat-label">Backup Today</span><span class="stat-value">${fmtWh(backupDay)}</span>
       <span class="stat-label">Total Load</span><span class="stat-value" style="font-weight:700">${fmtW(totalLoad)}</span>
       <span class="stat-label">Uptime</span><span class="stat-value">${uptimeStr}</span>
@@ -629,6 +636,7 @@ async function refresh() {
     } else { tb.style.display = 'none'; }
     $('#clock').textContent = new Date().toLocaleTimeString();
 
+    window.energyCfg = j.energy || null;
     const devs = j.devices || {};
     const deltas = [], shps = [];
     for (const [sn, info] of Object.entries(devs)) {

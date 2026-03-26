@@ -24,6 +24,9 @@ class Config:
     # Telegram alerts
     telegram_token: str = ""
     telegram_chat_id: str = ""
+    # Energy cost tracking
+    energy_rate: float = 0.0       # cost per kWh
+    energy_currency: str = "$"     # currency symbol
 
 
 def load_config(env_file: str = ".env") -> Config:
@@ -70,4 +73,6 @@ def load_config(env_file: str = ".env") -> Config:
         device_sns=device_sns,
         telegram_token=os.environ.get("TELEGRAM_BOT_TOKEN", ""),
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID", ""),
+        energy_rate=float(os.environ.get("ENERGY_RATE", "0")),
+        energy_currency=os.environ.get("ENERGY_CURRENCY", "$"),
     )
