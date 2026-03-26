@@ -1,0 +1,22 @@
+# Portainer Stack — set env vars in Portainer UI
+# Required environment variables:
+#   ECOFLOW_EMAIL        — your EcoFlow app email
+#   ECOFLOW_PASSWORD     — your EcoFlow app password
+#   ECOFLOW_DEVICE_SNS   — comma-separated serial numbers
+
+services:
+  ecoflow-dashboard:
+    image: ghcr.io/win365ru/ecoflow-dashboard:latest
+    container_name: ecoflow-dashboard
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - ECOFLOW_EMAIL=${ECOFLOW_EMAIL}
+      - ECOFLOW_PASSWORD=${ECOFLOW_PASSWORD}
+      - ECOFLOW_DEVICE_SNS=${ECOFLOW_DEVICE_SNS}
+    volumes:
+      - ecoflow-data:/data
+
+volumes:
+  ecoflow-data:
