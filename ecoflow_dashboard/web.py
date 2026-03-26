@@ -200,6 +200,94 @@ def api_history_range() -> Response:
         return Response(json.dumps({"error": str(e)}), status=500, content_type="application/json")
 
 
+@app.route("/api/degradation")
+def api_degradation() -> Response:
+    """SOH% over time for battery degradation tracking."""
+    if not _db_path:
+        return Response(json.dumps([]), content_type="application/json")
+    sn = request.args.get("sn", "")
+    if not sn:
+        return Response(json.dumps({"error": "sn required"}), status=400, content_type="application/json")
+    try:
+        with sqlite3.connect(_db_path) as conn:
+            # Get daily SOH readings (one per day, averaged)
+            rows = conn.execute(
+                "SELECT DATE(timestamp) as day, AVG(value) as soh, MIN(value), MAX(value) "
+                "FROM snapshots WHERE device_sn=? AND key='bmsMaster.soh' "
+                "AND value > 0 GROUP BY day ORDER BY day",
+                (sn,),
+            ).fetchall()
+            # Also get cycle count progression
+            cycles = conn.execute(
+                "SELECT DATE(timestamp) as day, MAX(value) as cycles "
+                "FROM snapshots WHERE device_sn=? AND key='bmsMaster.cycles' "
+                "GROUP BY day ORDER BY day",
+                (sn,),
+            ).fetchall()
+            cycle_map = {r[0]: r[1] for r in cycles}
+
+            result = []
+            for day, soh_avg, soh_min, soh_max in rows:
+                result.append({
+                    "date": day,
+                    "soh": round(soh_avg, 1),
+                    "soh_min": round(soh_min, 1),
+                    "soh_max": round(soh_max, 1),
+                    "cycles": cycle_map.get(day, 0),
+                })
+
+            # Predict replacement: linear regression on SOH
+            prediction = None
+            if len(result) >= 7:
+                soh_values = [r["soh"] for r in result]
+                n = len(soh_values)
+                if soh_values[0] > soh_values[-1]:  # degrading
+                    daily_drop = (soh_values[0] - soh_values[-1]) / n
+                    if daily_drop > 0:
+                        current = soh_values[-1]
+                        days_to_80 = max(0, (current - 80) / daily_drop) if current > 80 else 0
+                        days_to_70 = max(0, (current - 70) / daily_drop) if current > 70 else 0
+                        prediction = {
+                            "daily_drop": round(daily_drop, 4),
+                            "days_to_80pct": int(days_to_80),
+                            "days_to_70pct": int(days_to_70),
+                        }
+
+            return Response(
+                json.dumps({"data": result, "prediction": prediction}),
+                content_type="application/json",
+            )
+    except Exception as e:
+        return Response(json.dumps({"error": str(e)}), status=500, content_type="application/json")
+
+
+@app.route("/api/outages")
+def api_outages() -> Response:
+    """Power outage history."""
+    if not _db_path:
+        return Response(json.dumps([]), content_type="application/json")
+    sn = request.args.get("sn", "")
+    limit = int(request.args.get("limit", "50"))
+    try:
+        with sqlite3.connect(_db_path) as conn:
+            if sn:
+                rows = conn.execute(
+                    "SELECT * FROM outages WHERE device_sn=? ORDER BY start_time DESC LIMIT ?",
+                    (sn, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM outages ORDER BY start_time DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            cols = ["id", "device_sn", "start_time", "end_time", "duration_sec",
+                    "soc_start", "soc_end", "soc_used", "peak_load", "avg_load"]
+            result = [dict(zip(cols, r)) for r in rows]
+            return Response(json.dumps(result), content_type="application/json")
+    except Exception as e:
+        return Response(json.dumps({"error": str(e)}), status=500, content_type="application/json")
+
+
 def _live_collector() -> None:
     """Background thread collecting live data points every 2 seconds."""
     while True:
@@ -392,6 +480,32 @@ HTML_PAGE = r"""<!DOCTYPE html>
   <div style="margin-top:8px">
     <canvas id="chart-circuits" height="120"></canvas>
   </div>
+</div>
+
+<!-- Battery Degradation -->
+<div class="card" style="margin-top:8px">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px">
+    <span class="card-title" style="margin:0">Battery Health</span>
+    <select id="deg-device" class="btn" onchange="loadDegradation()"></select>
+  </div>
+  <div id="deg-prediction" style="font-size:12px;color:var(--dim);margin-bottom:8px"></div>
+  <canvas id="chart-degradation" height="150"></canvas>
+</div>
+
+<!-- Power Outage Log -->
+<div class="card" style="margin-top:8px">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+    <span class="card-title" style="margin:0">Power Outage Log</span>
+  </div>
+  <div id="outage-table" style="font-size:12px"></div>
+</div>
+
+<!-- Energy Flow -->
+<div class="card" style="margin-top:8px">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+    <span class="card-title" style="margin:0">Energy Flow</span>
+  </div>
+  <canvas id="chart-flow" height="200"></canvas>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -910,10 +1024,168 @@ async function loadHistory() {
   } catch(e) { console.error('history error', e); }
 }
 
+// ── Battery Degradation ──
+let chartDeg = null;
+
+function initDegChart() {
+  const ctx = document.getElementById('chart-degradation');
+  if (!ctx) return;
+  chartDeg = new Chart(ctx, {
+    type: 'line',
+    data: { labels: [], datasets: [] },
+    options: {
+      ...chartOpts,
+      scales: {
+        ...chartOpts.scales,
+        y: { ...chartOpts.scales.y, min: 60, max: 100, title: { display: true, text: 'SOH %', color: '#8b949e' } },
+        y1: { position: 'right', ticks: { color: '#8b949e' }, grid: { display: false },
+              title: { display: true, text: 'Cycles', color: '#8b949e' } }
+      }
+    }
+  });
+  // Populate device selector
+  const sel = document.getElementById('deg-device');
+  const deltas = Object.entries(allDevicesList).filter(([s,v]) => v.type.includes('delta'));
+  sel.innerHTML = deltas.map(([sn,v]) => `<option value="${sn}">Delta Pro (${sn.slice(-6)})</option>`).join('');
+  if (deltas.length) loadDegradation();
+}
+
+async function loadDegradation() {
+  const sn = document.getElementById('deg-device').value;
+  if (!sn || !chartDeg) return;
+  try {
+    const r = await fetch(`/api/degradation?sn=${sn}`);
+    const j = await r.json();
+    const data = j.data || [];
+    if (!data.length) {
+      document.getElementById('deg-prediction').textContent = 'No degradation data yet. SOH is logged every 5 minutes.';
+      return;
+    }
+    chartDeg.data = {
+      labels: data.map(d => d.date),
+      datasets: [
+        { label: 'SOH %', data: data.map(d => d.soh), borderColor: '#3fb950', borderWidth: 2, pointRadius: 2,
+          fill: false, yAxisID: 'y' },
+        { label: 'Cycles', data: data.map(d => d.cycles), borderColor: '#58a6ff', borderWidth: 1, pointRadius: 1,
+          fill: false, yAxisID: 'y1' }
+      ]
+    };
+    chartDeg.update();
+
+    // Prediction
+    const pred = j.prediction;
+    if (pred) {
+      const parts = [`Daily drop: ${pred.daily_drop}%`];
+      if (pred.days_to_80pct > 0) parts.push(`80% SOH in ~${Math.round(pred.days_to_80pct/30)} months`);
+      if (pred.days_to_70pct > 0) parts.push(`70% SOH in ~${Math.round(pred.days_to_70pct/30)} months`);
+      document.getElementById('deg-prediction').innerHTML =
+        '🔮 <b>Prediction:</b> ' + parts.join(' · ');
+    } else {
+      document.getElementById('deg-prediction').textContent = `${data.length} days of data. Need 7+ days for prediction.`;
+    }
+  } catch(e) { console.error('degradation error', e); }
+}
+
+// ── Power Outage Log ──
+async function loadOutages() {
+  try {
+    const r = await fetch('/api/outages?limit=20');
+    const outages = await r.json();
+    if (!outages.length) {
+      document.getElementById('outage-table').innerHTML = '<span style="color:var(--dim)">No outages recorded yet.</span>';
+      return;
+    }
+    let html = '<table class="circuits"><tr><th>Date</th><th>Duration</th><th>SOC</th><th>Used</th><th>Peak</th><th>Avg</th></tr>';
+    for (const o of outages) {
+      const start = new Date(o.start_time);
+      const dur = o.duration_sec;
+      const durStr = dur >= 3600 ? `${Math.floor(dur/3600)}h ${Math.floor((dur%3600)/60)}m` : `${Math.floor(dur/60)}m ${dur%60}s`;
+      html += `<tr>
+        <td>${start.toLocaleDateString()} ${start.toLocaleTimeString()}</td>
+        <td>${durStr}</td>
+        <td>${o.soc_start?.toFixed(0)}% → ${o.soc_end?.toFixed(0)}%</td>
+        <td style="color:var(--red)">${o.soc_used?.toFixed(1)}%</td>
+        <td>${o.peak_load?.toFixed(0)} W</td>
+        <td>${o.avg_load?.toFixed(0)} W</td>
+      </tr>`;
+    }
+    html += '</table>';
+    document.getElementById('outage-table').innerHTML = html;
+  } catch(e) { console.error('outages error', e); }
+}
+
+// ── Energy Flow Diagram (Sankey-style bar chart) ──
+let chartFlow = null;
+
+function initFlowChart() {
+  const ctx = document.getElementById('chart-flow');
+  if (!ctx) return;
+  chartFlow = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: [], datasets: [] },
+    options: {
+      ...chartOpts, indexAxis: 'y',
+      scales: {
+        x: { ...chartOpts.scales.x, title: { display: true, text: 'Watts', color: '#8b949e' } },
+        y: { ...chartOpts.scales.y }
+      },
+      plugins: { legend: { display: false } }
+    }
+  });
+}
+
+function updateFlowChart() {
+  if (!chartFlow || !allDevicesList) return;
+  const labels = [], values = [], colors = [];
+
+  // Grid input
+  for (const [sn, info] of Object.entries(allDevicesList)) {
+    if (!info.type.includes('panel')) continue;
+    const d = info.data;
+    const totalLoad = (() => { let s=0; for(let i=0;i<12;i++) s+=g(d,`infoList.${i}.chWatt`); return s; })();
+
+    labels.push('Grid → SHP'); values.push(totalLoad); colors.push('#3fb950');
+
+    // Per circuit
+    const cNames = window.circuitNames;
+    for (let i = 0; i < 12; i++) {
+      const w = g(d, `infoList.${i}.chWatt`);
+      if (w > 5) {
+        const name = cNames && cNames[i] ? cNames[i] : `Circuit ${i+1}`;
+        labels.push(`  → ${name}`); values.push(w); colors.push(i >= 10 ? '#58a6ff' : '#8b949e');
+      }
+    }
+  }
+
+  // Delta Pro power flow
+  for (const [sn, info] of Object.entries(allDevicesList)) {
+    if (!info.type.includes('delta')) continue;
+    const d = info.data;
+    const totalIn = g(d, 'pd.wattsInSum');
+    const totalOut = g(d, 'pd.wattsOutSum');
+    const short = sn.slice(-6);
+    if (totalIn > 5) { labels.push(`Grid → DP ${short}`); values.push(totalIn); colors.push('#3fb950'); }
+    if (totalOut > 5) { labels.push(`DP ${short} → Load`); values.push(totalOut); colors.push('#f85149'); }
+  }
+
+  chartFlow.data = {
+    labels,
+    datasets: [{ data: values, backgroundColor: colors, borderWidth: 0 }]
+  };
+  chartFlow.update();
+}
+
 // Init charts after Chart.js loads
 setTimeout(() => {
   initCharts();
-  setInterval(() => { if (chartMode === 'live') updateLiveCharts(); }, 3000);
+  initDegChart();
+  initFlowChart();
+  loadOutages();
+  setInterval(() => {
+    if (chartMode === 'live') updateLiveCharts();
+    updateFlowChart();
+  }, 3000);
+  setInterval(loadOutages, 60000); // refresh outages every minute
 }, 500);
 </script>
 </body>

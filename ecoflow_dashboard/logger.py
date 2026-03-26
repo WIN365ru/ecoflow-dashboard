@@ -87,6 +87,9 @@ class DataLogger:
 
         self._db_path = db_path
         self._init_db()
+        # Outage tracking per SHP device
+        self._outage_active: dict[str, dict] = {}  # sn → {start_time, soc_start, loads: []}
+
 
     def _init_db(self) -> None:
         with sqlite3.connect(self._db_path) as conn:
@@ -107,6 +110,25 @@ class DataLogger:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_snapshots_key
                 ON snapshots (device_sn, key, timestamp)
+            """)
+            # Power outage log
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS outages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    device_sn TEXT NOT NULL,
+                    start_time TEXT NOT NULL,
+                    end_time TEXT,
+                    duration_sec INTEGER,
+                    soc_start REAL,
+                    soc_end REAL,
+                    soc_used REAL,
+                    peak_load REAL,
+                    avg_load REAL
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_outages_sn
+                ON outages (device_sn, start_time)
             """)
 
     def start(self) -> None:
@@ -148,6 +170,52 @@ class DataLogger:
                         rows.append((ts, sn, dtype, key, float(v)))
                     except (TypeError, ValueError):
                         continue
+
+        # Check for grid outages on SHP devices
+        for sn, dtype in self._device_types.items():
+            if "panel" not in dtype:
+                continue
+            data = self._mqtt.get_device_data(sn)
+            if not data:
+                continue
+            grid_sta = data.get("gridSta") or data.get("heartbeat.gridSta")
+            combined_soc = float(data.get("backupBatPer", 0) or data.get("heartbeat.backupBatPer", 0) or 0)
+            total_load = sum(
+                float(data.get(f"infoList.{i}.chWatt", 0) or 0) for i in range(12)
+            )
+
+            if not grid_sta and sn not in self._outage_active:
+                # Outage started
+                self._outage_active[sn] = {
+                    "start_time": ts,
+                    "soc_start": combined_soc,
+                    "loads": [total_load],
+                }
+                log.info("Grid outage started for %s at %s (SOC: %.0f%%)", sn, ts, combined_soc)
+            elif not grid_sta and sn in self._outage_active:
+                # Outage ongoing — track loads
+                self._outage_active[sn]["loads"].append(total_load)
+            elif grid_sta and sn in self._outage_active:
+                # Outage ended
+                outage = self._outage_active.pop(sn)
+                start = outage["start_time"]
+                loads = outage["loads"]
+                try:
+                    from datetime import datetime as _dt
+                    dur = int((_dt.fromisoformat(ts) - _dt.fromisoformat(start)).total_seconds())
+                except Exception:
+                    dur = len(loads) * self._interval
+                soc_used = outage["soc_start"] - combined_soc
+                peak = max(loads) if loads else 0
+                avg = sum(loads) / len(loads) if loads else 0
+                with sqlite3.connect(self._db_path) as conn:
+                    conn.execute(
+                        "INSERT INTO outages (device_sn, start_time, end_time, duration_sec, "
+                        "soc_start, soc_end, soc_used, peak_load, avg_load) VALUES (?,?,?,?,?,?,?,?,?)",
+                        (sn, start, ts, dur, outage["soc_start"], combined_soc, soc_used, peak, avg),
+                    )
+                log.info("Grid outage ended for %s: %ds, SOC %.0f%%→%.0f%%, peak %.0fW",
+                         sn, dur, outage["soc_start"], combined_soc, peak)
 
         if rows:
             with sqlite3.connect(self._db_path) as conn:
