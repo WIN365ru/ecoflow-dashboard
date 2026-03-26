@@ -196,12 +196,23 @@ class AlertManager:
         self._cooldowns[key] = time.time()
         return True
 
+    def _get_session(self) -> requests.Session:
+        """Get a requests session, optionally with SOCKS5 proxy for Telegram."""
+        if not hasattr(self, "_tg_session"):
+            self._tg_session = requests.Session()
+            proxy = os.environ.get("TELEGRAM_PROXY", "")
+            if proxy:
+                self._tg_session.proxies = {"https": proxy, "http": proxy}
+                log.info("Telegram using proxy: %s", proxy.split("@")[-1] if "@" in proxy else proxy)
+        return self._tg_session
+
     def _send(self, text: str, retries: int = 3) -> None:
         """Send a Telegram message (Markdown format) with retry."""
         url = f"https://api.telegram.org/bot{self._token}/sendMessage"
+        session = self._get_session()
         for attempt in range(retries):
             try:
-                r = requests.post(url, json={
+                r = session.post(url, json={
                     "chat_id": self._chat_id,
                     "text": text,
                     "parse_mode": "Markdown",

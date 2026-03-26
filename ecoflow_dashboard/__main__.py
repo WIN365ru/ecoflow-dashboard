@@ -178,6 +178,15 @@ def main() -> None:
         tg_bot.start()
         console.print("[dim]Telegram bot commands enabled[/]")
 
+    # Start local API client (LAN direct connection)
+    local_client = None
+    if config.local_devices:
+        from .local_api import LocalApiClient, LocalDevice
+        local_devs = [LocalDevice(ip=ip, sn=sn) for ip, sn in config.local_devices]
+        local_client = LocalApiClient(local_devs)
+        local_client.start()
+        console.print(f"[dim]Local API: {len(local_devs)} device(s) on LAN[/]")
+
     # Start solar forecast
     solar_forecast = None
     if config.latitude and config.longitude:

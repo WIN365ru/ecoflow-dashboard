@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from datetime import datetime
@@ -52,6 +53,12 @@ class TelegramBot:
         self._offset = 0
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        # Session with optional SOCKS5 proxy
+        self._session = requests.Session()
+        proxy = os.environ.get("TELEGRAM_PROXY", "")
+        if proxy:
+            self._session.proxies = {"https": proxy, "http": proxy}
+            log.info("Telegram bot using proxy: %s", proxy.split("@")[-1] if "@" in proxy else proxy)
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._poll_loop, daemon=True, name="telegram-bot")
@@ -81,7 +88,7 @@ class TelegramBot:
 
     def _get_updates(self) -> list[dict]:
         try:
-            r = requests.get(
+            r = self._session.get(
                 f"{self._base}/getUpdates",
                 params={"offset": self._offset, "timeout": 30, "allowed_updates": '["message","callback_query"]'},
                 timeout=35,
@@ -132,7 +139,7 @@ class TelegramBot:
 
         # Acknowledge callback
         try:
-            requests.post(f"{self._base}/answerCallbackQuery",
+            self._session.post(f"{self._base}/answerCallbackQuery",
                           json={"callback_query_id": cb["id"]}, timeout=5)
         except Exception:
             pass
@@ -534,15 +541,15 @@ class TelegramBot:
 
             if edit_msg_id:
                 payload["message_id"] = edit_msg_id
-                requests.post(f"{self._base}/editMessageText", json=payload, timeout=10)
+                self._session.post(f"{self._base}/editMessageText", json=payload, timeout=10)
             else:
-                requests.post(f"{self._base}/sendMessage", json=payload, timeout=10)
+                self._session.post(f"{self._base}/sendMessage", json=payload, timeout=10)
         except Exception as e:
             log.warning("Bot send error: %s", e)
 
     def _delete_msg(self, msg_id: int) -> None:
         try:
-            requests.post(f"{self._base}/deleteMessage",
+            self._session.post(f"{self._base}/deleteMessage",
                           json={"chat_id": self._chat_id, "message_id": msg_id}, timeout=5)
         except Exception:
             pass

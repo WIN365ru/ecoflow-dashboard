@@ -36,6 +36,8 @@ class Config:
     latitude: float = 0.0
     longitude: float = 0.0
     solar_peak_watts: float = 400
+    # Local API (LAN direct connection)
+    local_devices: list[tuple[str, str]] | None = None  # [(ip, sn), ...]
 
 
 def load_config(env_file: str = ".env") -> Config:
@@ -91,6 +93,7 @@ def load_config(env_file: str = ".env") -> Config:
         latitude=float(os.environ.get("SOLAR_LATITUDE", "0")),
         longitude=float(os.environ.get("SOLAR_LONGITUDE", "0")),
         solar_peak_watts=float(os.environ.get("SOLAR_PEAK_WATTS", "400")),
+        local_devices=_parse_local_devices(os.environ.get("LOCAL_DEVICES", "")),
     )
 
 
@@ -109,6 +112,19 @@ def get_energy_rate(config: Config, hour: int | None = None) -> float:
     else:  # overnight day window (unusual but handle it)
         is_day = hour >= config.energy_day_start or hour < config.energy_day_end
     return config.energy_rate if is_day else config.energy_rate_night
+
+
+def _parse_local_devices(raw: str) -> list[tuple[str, str]] | None:
+    """Parse LOCAL_DEVICES=ip1=sn1,ip2=sn2 format."""
+    if not raw:
+        return None
+    devices = []
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if "=" in pair:
+            ip, sn = pair.split("=", 1)
+            devices.append((ip.strip(), sn.strip()))
+    return devices if devices else None
 
 
 def _parse_circuit_names(raw: str) -> list[str] | None:
