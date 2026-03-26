@@ -45,6 +45,7 @@ _device_types: dict[str, str] = {}
 _device_names: dict[str, str] = {}
 _controller: DeviceController | None = None
 _db_path: str = ""
+_alerter: object | None = None
 
 # Live data ring buffer: {sn: deque of {ts, key: value, ...}}
 _live_buffer: dict[str, deque] = {}
@@ -79,7 +80,10 @@ def api_devices() -> Response:
         }
     return Response(
         json.dumps({"connected": _mqtt.connected, "version": __version__,
-                    "latest_version": _get_latest_version(), "devices": result}),
+                    "latest_version": _get_latest_version(),
+                    "telegram": {"enabled": _alerter is not None,
+                                 "connected": getattr(_alerter, "connected", False)} if _alerter else None,
+                    "devices": result}),
         content_type="application/json",
     )
 
@@ -223,13 +227,15 @@ def run_web(
     device_names: dict[str, str],
     port: int = 5000,
     db_path: str = "",
+    alerter: object | None = None,
 ) -> None:
-    global _mqtt, _device_types, _device_names, _controller, _db_path
+    global _mqtt, _device_types, _device_names, _controller, _db_path, _alerter
     _mqtt = mqtt_client
     _device_types = device_types
     _device_names = device_names
     _controller = DeviceController(mqtt_client, device_types)
     _db_path = db_path
+    _alerter = alerter
 
     # Start live data collector
     collector = threading.Thread(target=_live_collector, daemon=True)
@@ -339,6 +345,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
   <h1>EcoFlow Dashboard</h1>
   <span class="badge badge-dim" id="version"></span>
   <span class="badge" id="mqtt-badge">--</span>
+  <span class="badge" id="tg-badge" style="display:none">--</span>
   <span style="color:var(--dim);font-size:12px" id="clock"></span>
 </div>
 <div id="update-banner"></div>
@@ -614,6 +621,12 @@ async function refresh() {
     const mb = $('#mqtt-badge');
     mb.textContent = j.connected ? 'MQTT Connected' : 'MQTT Disconnected';
     mb.className = 'badge ' + (j.connected ? 'badge-green' : 'badge-red');
+    const tb = $('#tg-badge');
+    if (j.telegram) {
+      tb.textContent = j.telegram.connected ? 'TG ✓' : 'TG ✗';
+      tb.className = 'badge ' + (j.telegram.connected ? 'badge-green' : 'badge-red');
+      tb.style.display = '';
+    } else { tb.style.display = 'none'; }
     $('#clock').textContent = new Date().toLocaleTimeString();
 
     const devs = j.devices || {};

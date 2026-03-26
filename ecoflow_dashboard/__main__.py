@@ -152,7 +152,7 @@ def main() -> None:
         from .web import run_web
         console.print(f"Starting web dashboard v{__version__} on http://0.0.0.0:{args.web_port}")
         try:
-            run_web(mqtt_client, device_types, device_names, port=args.web_port, db_path=args.db)
+            run_web(mqtt_client, device_types, device_names, port=args.web_port, db_path=args.db, alerter=alerter)
         except KeyboardInterrupt:
             pass
         finally:
@@ -170,7 +170,7 @@ def main() -> None:
         console.print(f"Starting dashboard v{__version__}...")
 
         try:
-            run_dashboard(mqtt_client, device_types, device_names, version_checker=version_checker)
+            run_dashboard(mqtt_client, device_types, device_names, version_checker=version_checker, alerter=alerter)
         except KeyboardInterrupt:
             pass
         finally:

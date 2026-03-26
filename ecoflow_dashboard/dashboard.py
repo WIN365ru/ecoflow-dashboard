@@ -728,14 +728,22 @@ def build_dashboard(
     status_msg: str = "",
     commands: dict | None = None,
     update_msg: str = "",
+    alerter: object | None = None,
 ) -> Group:
     from . import __version__
 
     panels = []
 
     status = "[green]MQTT Connected[/]" if mqtt_client.connected else "[red]MQTT Disconnected[/]"
+    tg_status = ""
+    if alerter and hasattr(alerter, "connected"):
+        if alerter.connected:
+            tg_status = "  [green]TG ✓[/]"
+        else:
+            err = getattr(alerter, "last_error", "")
+            tg_status = f"  [red]TG ✗[/]" if not err else f"  [red]TG ✗ {err[:20]}[/]"
     header = Text.from_markup(
-        f"[bold]EcoFlow Dashboard[/] [dim]v{__version__}[/]  {status}  "
+        f"[bold]EcoFlow Dashboard[/] [dim]v{__version__}[/]  {status}{tg_status}  "
         f"[dim]{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}[/]"
     )
     panels.append(header)
@@ -796,6 +804,7 @@ def run_dashboard(
     device_types: dict[str, str],
     device_names: dict[str, str],
     version_checker: object | None = None,
+    alerter: object | None = None,
 ) -> None:
     import queue as _queue
     from .controls import DeviceController, KeyboardThread
@@ -854,6 +863,7 @@ def run_dashboard(
                     status_msg=status_msg,
                     commands=controller.get_commands(selected_sn),
                     update_msg=update_msg,
+                    alerter=alerter,
                 ))
                 time.sleep(0.5)
     finally:

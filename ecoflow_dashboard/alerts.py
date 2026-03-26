@@ -65,6 +65,10 @@ class AlertManager:
         # Track last data timestamp per device
         self._last_data_ts: dict[str, float] = {}
 
+        # Telegram connection status
+        self._telegram_ok: bool = False
+        self._telegram_error: str = ""
+
         # Daily summary
         self._summary_hour = os.environ.get("ALERT_DAILY_SUMMARY", DEFAULTS["ALERT_DAILY_SUMMARY"])
         self._last_summary_date: str = ""
@@ -86,9 +90,19 @@ class AlertManager:
         log.info("AlertManager started (Telegram chat=%s)", self._chat_id)
 
     def stop(self) -> None:
+        self._send("🔴 *EcoFlow Dashboard Stopped*\nAlerts deactivated.")
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=5)
+
+    @property
+    def connected(self) -> bool:
+        """Check if Telegram is reachable (cached last send result)."""
+        return self._telegram_ok
+
+    @property
+    def last_error(self) -> str:
+        return self._telegram_error
 
     def _run(self) -> None:
         # Wait for initial data
@@ -121,13 +135,18 @@ class AlertManager:
                     "parse_mode": "Markdown",
                 }, timeout=15)
                 if r.ok:
+                    self._telegram_ok = True
+                    self._telegram_error = ""
                     log.info("Telegram alert sent: %s", text[:80])
                     return
+                self._telegram_error = f"HTTP {r.status_code}"
                 log.warning("Telegram API error: %s %s", r.status_code, r.text[:100])
             except Exception as e:
+                self._telegram_error = str(e)[:50]
                 log.warning("Telegram send attempt %d/%d failed: %s", attempt + 1, retries, e)
                 if attempt < retries - 1:
-                    time.sleep(5 * (attempt + 1))  # 5s, 10s backoff
+                    time.sleep(5 * (attempt + 1))
+        self._telegram_ok = False
         log.error("Failed to send Telegram alert after %d attempts", retries)
 
     def _device_label(self, sn: str) -> str:
