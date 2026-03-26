@@ -734,7 +734,7 @@ function buildDeltaPro(sn, name, d) {
   const totalIn = g(d,'pd.wattsInSum');
   const totalOut = g(d,'pd.wattsOutSum');
   const acOut = g(d,'inv.outputWatts');
-  const solarIn = g(d,'mppt.inWatts');
+  const solarIn = g(d,'mppt.inWatts') / 10; // raw is deciWatts
   const acIn = g(d,'inv.inputWatts');
   const car = g(d,'pd.carWatts');
   const volts = g(d,'bmsMaster.vol')/1000;
@@ -781,9 +781,9 @@ function buildDeltaPro(sn, name, d) {
   const invFw = d['inv.sysVer'] || ''; const mpptFw = d['mppt.swVer'] || '';
   const acFreq = g(d,'inv.cfgAcOutFreq') ? '50Hz' : '60Hz';
   const acVolt = g(d,'inv.cfgAcOutVoltage') / 1000;
-  // Solar / MPPT — all values in decivolts/deciamps (÷10)
+  // Solar / MPPT — volts=÷10, inAmp=÷100 (centiamps), outAmp=÷10
   const pvVol = g(d,'mppt.inVol') / 10;
-  const pvAmp = g(d,'mppt.inAmp') / 10;
+  const pvAmp = g(d,'mppt.inAmp') / 100;
   const mpptOutV = g(d,'mppt.outVol') / 10;
   const mpptOutA = g(d,'mppt.outAmp') / 10;
   const chgTypes = {0:'Off',1:'Solar',2:'AC',3:'AC+Solar'};

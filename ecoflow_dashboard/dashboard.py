@@ -144,7 +144,7 @@ def _build_delta_pro_panel(sn: str, data: dict, name: str, device_type: str = DE
     soh_lbl = _soh_label(soh)
 
     # Title with device type + SOC + solar icon
-    sun_icon = " [yellow]☀[/]" if _get(data, "mppt.inWatts") > 0 else ""
+    sun_icon = " [yellow]☀[/]" if _get(data, "mppt.inWatts") > 5 else ""  # >0.5W real
     panel_title = (
         f"[bold]{type_label}[/bold] [white]({sn})[/white]"
         f"  [{color} bold]{int(soc)}%[/]{sun_icon}"
@@ -163,14 +163,14 @@ def _build_delta_pro_panel(sn: str, data: dict, name: str, device_type: str = DE
     t.add_column(min_width=10, justify="right")
 
     # Power inputs
-    solar_in = _get(data, "mppt.inWatts")
+    solar_in = _get(data, "mppt.inWatts") / 10  # raw is deciWatts
     ac_in = _get(data, "inv.inputWatts")
     total_in = _get(data, "pd.wattsInSum")
     total_out = _get(data, "pd.wattsOutSum")
 
-    # Solar details (raw values are decivolts / deciamps → ÷10)
+    # Solar details: voltage is decivolts (÷10), current is centiamps (÷100)
     solar_vol = _get(data, "mppt.inVol") / 10
-    solar_amp = _get(data, "mppt.inAmp") / 10
+    solar_amp = _get(data, "mppt.inAmp") / 100
 
     # AC details
     ac_in_vol = _get(data, "inv.acInVol") / 1000 if _get(data, "inv.acInVol") > 100 else _get(data, "inv.acInVol")
@@ -251,9 +251,9 @@ def _build_delta_pro_panel(sn: str, data: dict, name: str, device_type: str = DE
     mppt_used_time = _get(data, "pd.mpptUsedTime")
     solar_lifetime = _get(data, "pd.chgSunPower")
 
-    # All MPPT values are in decivolts / deciamps (raw ÷ 10)
+    # MPPT units: volts=decivolts(÷10), inAmp=centiamps(÷100), outAmp=deciamps(÷10)
     mppt_in_vol /= 10
-    mppt_in_amp /= 10
+    mppt_in_amp /= 100  # centiamps for solar input
     mppt_out_vol /= 10
     mppt_out_amp /= 10
 
