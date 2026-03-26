@@ -285,7 +285,8 @@ HTML_PAGE = r"""<!DOCTYPE html>
     <select id="hist-hours" class="btn" style="display:none" onchange="loadHistory()">
       <option value="1">1 hour</option><option value="6">6 hours</option>
       <option value="24" selected>24 hours</option><option value="72">3 days</option>
-      <option value="168">7 days</option>
+      <option value="168">7 days</option><option value="336">14 days</option>
+      <option value="720">30 days</option>
     </select>
     <select id="chart-device" class="btn" onchange="chartDeviceChanged()"></select>
   </div>

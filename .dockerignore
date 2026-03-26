@@ -1,0 +1,6 @@
+.env
+*.db
+*.egg-info/
+__pycache__/
+.claude/
+.git/

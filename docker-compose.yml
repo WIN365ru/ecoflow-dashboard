@@ -1,0 +1,14 @@
+services:
+  ecoflow-dashboard:
+    build: .
+    container_name: ecoflow-dashboard
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    volumes:
+      - ecoflow-data:/data
+
+volumes:
+  ecoflow-data:

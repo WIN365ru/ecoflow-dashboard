@@ -403,17 +403,17 @@ def _fmt_uptime(seconds: float) -> str:
     return f"{hours}h {(s % 3600) // 60}m"
 
 
-# Delta Pro nominal voltage for mAh → Wh conversion
-_NOMINAL_V = 51.2
+# Average discharge voltage for capacity rating (EcoFlow uses ~45V, not 51.2V nominal)
+_RATED_V = 45.0
 
 
 def _mah_to_wh(mah: float) -> float:
-    """Convert mAh to Wh using nominal battery voltage (51.2V for Delta Pro)."""
+    """Convert mAh to Wh using average discharge voltage (45V for Delta Pro LFP)."""
     if mah <= 0:
         return 0
     # SHP reports capacity in mAh; if value > 10000 it's definitely mAh
     if mah > 10000:
-        return mah * _NOMINAL_V / 1000
+        return mah * _RATED_V / 1000
     # Smaller values might already be Wh
     return mah
 
@@ -530,10 +530,11 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
             pwr += f" [red]-{_fmt_watts(out_watts)}[/]"
 
         full_cap_wh = _mah_to_wh(full_cap)
+        remaining_wh = full_cap_wh * soc / 100 if full_cap_wh else 0
+        remaining_str = f"[{color}]{_fmt_wh(remaining_wh)}[/]" if remaining_wh else ""
         batt_lines.append(Text.from_markup(
-            f"  Batt {i+1}: [{color} bold]{int(soc)}%[/] {int(bat_temp)}°C"
+            f"  Batt {i+1}: [{color} bold]{int(soc)}%[/] {remaining_str} {int(bat_temp)}°C"
             f"  {flags_str}{pwr}"
-            f"  [dim]{_fmt_wh(full_cap_wh)} / {_fmt_watts(rate_power)}[/]"
             f"  {time_str}"
         ))
 
@@ -569,14 +570,15 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
             if ci not in dp_circuit_map and unmatched_dp:
                 dp_circuit_map[ci] = unmatched_dp.pop(0)
 
-    # Collect all circuit data
+    # Collect all circuit data (round to nearest 5W to reduce jitter)
     circuit_data = []
     total_load = 0.0
     for i in range(12):
-        w = _get(data,
-                 f"infoList.{i}.chWatt",
-                 f"loadCmdChCtrlInfos.{i}.ctrlWatt",
-                 f"heartbeat.loadCmdChCtrlInfos.{i}.ctrlWatt")
+        w_raw = _get(data,
+                     f"infoList.{i}.chWatt",
+                     f"loadCmdChCtrlInfos.{i}.ctrlWatt",
+                     f"heartbeat.loadCmdChCtrlInfos.{i}.ctrlWatt")
+        w = round(w_raw / 5) * 5 if w_raw >= 10 else round(w_raw)
         mode = _get(data,
                     f"loadCmdChCtrlInfos.{i}.ctrlMode",
                     f"heartbeat.loadCmdChCtrlInfos.{i}.ctrlMode")
@@ -612,7 +614,7 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
                     eff_txt = f" [{eff_c}]{eff:.0f}%[/]"
 
         circuit_data.append((i, w, mode, priority, ch_name, eff_txt))
-        total_load += w
+        total_load += w_raw
 
     # 2-column circuit table: left=circuits 1-6, right=circuits 7-12
     ct = Table(show_header=True, show_edge=False, pad_edge=True, title="Circuits", padding=(0, 1))
@@ -648,6 +650,8 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
             ])
         ct.add_row(*row)
 
+    energy_line = None  # watth.D.H data unreliable on SHP v1, use SQLite logging instead
+
     # ── System footer ──
     emerg_backup = _get(data, "emergencyStrategy.backupMode")
     emerg_overload = _get(data, "emergencyStrategy.overloadMode")
@@ -660,10 +664,21 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
     if work_time:
         sys_parts.append(f"Up: {_fmt_uptime(work_time)}")
 
+    # ── Error codes check ──
+    errors_active = []
+    for i in range(20):
+        ec = _get(data, f"errorCodes.{i}")
+        if ec:
+            errors_active.append(f"E{i}:{int(ec)}")
+    if errors_active:
+        sys_parts.append(f"[red]Errors: {', '.join(errors_active)}[/]")
+
     # ── Assemble ──
     elements: list = [info, ""]
     elements.extend(batt_lines)
     elements.extend(["", ct])
+    if energy_line:
+        elements.append(energy_line)
 
     subtitle_parts = [f"[bold]{_fmt_watts(total_load)}[/]"]
     if sys_parts:
