@@ -3,12 +3,27 @@
 #   ECOFLOW_EMAIL        — your EcoFlow app email
 #   ECOFLOW_PASSWORD     — your EcoFlow app password
 #   ECOFLOW_DEVICE_SNS   — comma-separated serial numbers
-# Optional (Telegram alerts):
+# Optional (Telegram):
 #   TELEGRAM_BOT_TOKEN   — from @BotFather
 #   TELEGRAM_CHAT_ID     — your chat ID
-#   ALERT_DAILY_SUMMARY  — hour for daily summary (0-23, default: 20)
-#   ALERT_BATTERY_LOW    — SOC % threshold (default: 20)
-#   ALERT_HIGH_TEMP      — °C threshold (default: 45)
+#   TELEGRAM_PROXY       — SOCKS5 proxy (socks5h://host:port)
+# Optional (Energy):
+#   ENERGY_RATE          — day rate per kWh
+#   ENERGY_RATE_NIGHT    — night rate per kWh (0 = flat)
+#   ENERGY_DAY_START     — day rate hour start (default: 7)
+#   ENERGY_DAY_END       — night rate hour start (default: 23)
+#   ENERGY_CURRENCY      — currency symbol (default: $)
+# Optional (Scheduler):
+#   SCHEDULE_CHARGE_START — start grid charge time (HH:MM)
+#   SCHEDULE_CHARGE_STOP  — stop grid charge time (HH:MM)
+#   SCHEDULE_MAX_SOC_GRID — max SOC for grid charge (default: 0=off)
+#   SCHEDULE_MAX_SOC_SOLAR — max SOC for solar charge (default: 100)
+# Optional (Solar Forecast):
+#   SOLAR_LATITUDE       — your latitude
+#   SOLAR_LONGITUDE      — your longitude
+#   SOLAR_PEAK_WATTS     — total panel wattage (default: 400)
+# Optional (Local API):
+#   LOCAL_DEVICES        — LAN devices (ip=sn,ip=sn)
 
 services:
   ecoflow-dashboard:
@@ -18,27 +33,43 @@ services:
     ports:
       - "5000:5000"
     environment:
+      # Auth
       - ECOFLOW_EMAIL=${ECOFLOW_EMAIL}
       - ECOFLOW_PASSWORD=${ECOFLOW_PASSWORD}
       - ECOFLOW_DEVICE_SNS=${ECOFLOW_DEVICE_SNS}
+      # Timezone
+      - TZ=${TZ:-UTC}
+      # Telegram
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - TELEGRAM_PROXY=${TELEGRAM_PROXY:-}
+      # Alerts
       - ALERT_DAILY_SUMMARY=${ALERT_DAILY_SUMMARY:-20}
+      - ALERT_MONTHLY_REPORT=${ALERT_MONTHLY_REPORT:-1}
       - ALERT_BATTERY_LOW=${ALERT_BATTERY_LOW:-20}
       - ALERT_HIGH_TEMP=${ALERT_HIGH_TEMP:-45}
-      - ALERT_MONTHLY_REPORT=${ALERT_MONTHLY_REPORT:-1}
+      # Energy
       - ENERGY_RATE=${ENERGY_RATE:-0}
       - ENERGY_RATE_NIGHT=${ENERGY_RATE_NIGHT:-0}
       - ENERGY_DAY_START=${ENERGY_DAY_START:-7}
       - ENERGY_DAY_END=${ENERGY_DAY_END:-23}
       - ENERGY_CURRENCY=${ENERGY_CURRENCY:-$}
+      # Circuits
       - CIRCUIT_NAMES=${CIRCUIT_NAMES:-}
-      - TZ=${TZ:-UTC}
+      # Scheduler
       - SCHEDULE_CHARGE_START=${SCHEDULE_CHARGE_START:-}
       - SCHEDULE_CHARGE_STOP=${SCHEDULE_CHARGE_STOP:-}
       - SCHEDULE_MAX_SOC_GRID=${SCHEDULE_MAX_SOC_GRID:-0}
       - SCHEDULE_MAX_SOC_SOLAR=${SCHEDULE_MAX_SOC_SOLAR:-100}
       - SCHEDULE_CHARGE_WATTS=${SCHEDULE_CHARGE_WATTS:-2500}
+      # Solar Forecast
+      - SOLAR_LATITUDE=${SOLAR_LATITUDE:-0}
+      - SOLAR_LONGITUDE=${SOLAR_LONGITUDE:-0}
+      - SOLAR_PEAK_WATTS=${SOLAR_PEAK_WATTS:-400}
+      # Local API (requires network_mode: host or macvlan)
+      - LOCAL_DEVICES=${LOCAL_DEVICES:-}
+    # Uncomment for local API access to LAN devices:
+    # network_mode: host
     volumes:
       - ecoflow-data:/data
 

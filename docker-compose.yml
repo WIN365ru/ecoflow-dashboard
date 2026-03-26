@@ -15,6 +15,8 @@ services:
       - .env
     environment:
       - TZ=${TZ:-UTC}
+    # For local API, the container needs access to your LAN
+    # network_mode: host  # uncomment if using LOCAL_DEVICES
     volumes:
       - ecoflow-data:/data
 
