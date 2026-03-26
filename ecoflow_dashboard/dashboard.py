@@ -490,7 +490,8 @@ def _mah_to_wh(mah: float) -> float:
 
 def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HOME_PANEL,
                      dp_data: list[tuple[str, dict]] | None = None,
-                     energy_rate: float = 0.0, energy_currency: str = "$") -> Panel:
+                     energy_rate: float = 0.0, energy_currency: str = "$",
+                     circuit_names: list[str] | None = None) -> Panel:
     type_label = DEVICE_TYPE_LABELS.get(device_type, device_type)
 
     # ── Grid + Energy (compact: 2 lines) ──
@@ -661,16 +662,20 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
                         f"loadCmdChCtrlInfos.{i}.priority",
                         f"heartbeat.loadCmdChCtrlInfos.{i}.priority",
                         f"emergencyStrategy.chSta.{i}.priority")
+        # Circuit name: config > MQTT > empty
         ch_name = ""
-        for key in [
-            f"loadChInfo.info.{i}.chName",
-            f"info.{i}.chName",
-            f"heartbeat.loadChInfo.info.{i}.chName",
-        ]:
-            v = data.get(key)
-            if v and isinstance(v, str):
-                ch_name = v
-                break
+        if circuit_names and i < len(circuit_names) and circuit_names[i]:
+            ch_name = circuit_names[i]
+        else:
+            for key in [
+                f"loadChInfo.info.{i}.chName",
+                f"info.{i}.chName",
+                f"heartbeat.loadChInfo.info.{i}.chName",
+            ]:
+                v = data.get(key)
+                if v and isinstance(v, str):
+                    ch_name = v
+                    break
 
         # Auto-label circuits 11/12 with matched Delta Pro
         eff_txt = ""
@@ -806,6 +811,7 @@ def build_dashboard(
     alerter: object | None = None,
     energy_rate: float = 0.0,
     energy_currency: str = "$",
+    circuit_names: list[str] | None = None,
 ) -> Group:
     from . import __version__
 
@@ -852,7 +858,8 @@ def build_dashboard(
             data = mqtt_client.get_device_data(sn)
             name = device_names.get(sn, sn)
             other_panels.append(_build_shp_panel(sn, data, name, dtype, dp_data=delta_pro_data,
-                                                energy_rate=energy_rate, energy_currency=energy_currency))
+                                                energy_rate=energy_rate, energy_currency=energy_currency,
+                                                circuit_names=circuit_names))
 
     # Place Delta Pros side by side if there are exactly 2
     if len(delta_panels) == 2:
@@ -885,6 +892,7 @@ def run_dashboard(
     alerter: object | None = None,
     energy_rate: float = 0.0,
     energy_currency: str = "$",
+    circuit_names: list[str] | None = None,
 ) -> None:
     import queue as _queue
     from .controls import DeviceController, KeyboardThread
@@ -946,6 +954,7 @@ def run_dashboard(
                     alerter=alerter,
                     energy_rate=energy_rate,
                     energy_currency=energy_currency,
+                    circuit_names=circuit_names,
                 ))
                 time.sleep(0.5)
     finally:

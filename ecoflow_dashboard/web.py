@@ -48,6 +48,7 @@ _db_path: str = ""
 _alerter: object | None = None
 _energy_rate: float = 0.0
 _energy_currency: str = "$"
+_circuit_names: list[str] | None = None
 
 # Live data ring buffer: {sn: deque of {ts, key: value, ...}}
 _live_buffer: dict[str, deque] = {}
@@ -86,6 +87,7 @@ def api_devices() -> Response:
                     "telegram": {"enabled": _alerter is not None,
                                  "connected": getattr(_alerter, "connected", False)} if _alerter else None,
                     "energy": {"rate": _energy_rate, "currency": _energy_currency} if _energy_rate > 0 else None,
+                    "circuit_names": _circuit_names,
                     "devices": result}),
         content_type="application/json",
     )
@@ -235,8 +237,9 @@ def run_web(
     alerter: object | None = None,
     energy_rate: float = 0.0,
     energy_currency: str = "$",
+    circuit_names: list[str] | None = None,
 ) -> None:
-    global _mqtt, _device_types, _device_names, _controller, _db_path, _alerter, _energy_rate, _energy_currency
+    global _mqtt, _device_types, _device_names, _controller, _db_path, _alerter, _energy_rate, _energy_currency, _circuit_names
     _mqtt = mqtt_client
     _device_types = device_types
     _device_names = device_names
@@ -245,6 +248,7 @@ def run_web(
     _alerter = alerter
     _energy_rate = energy_rate
     _energy_currency = energy_currency
+    _circuit_names = circuit_names
 
     # Start live data collector
     collector = threading.Thread(target=_live_collector, daemon=True)
@@ -570,7 +574,11 @@ function buildSHP(sn, name, d, allDevices) {
     const isDp = i >= 10;
     const cls = isDp ? ' class="dp-row"' : '';
     let label = '';
-    if (isDp) {
+    // Use configured circuit names first, then auto-detect DP
+    const cNames = window.circuitNames;
+    if (cNames && cNames[i]) {
+      label = cNames[i];
+    } else if (isDp) {
       const dpList = Object.entries(allDevices).filter(([s,v]) => v.type.includes('delta'));
       const dpIdx = i - 10;
       if (dpIdx < dpList.length) label = 'DP.'+dpList[dpIdx][0].slice(-4);
@@ -660,6 +668,7 @@ async function refresh() {
     $('#clock').textContent = new Date().toLocaleTimeString();
 
     window.energyCfg = j.energy || null;
+    window.circuitNames = j.circuit_names || null;
     const devs = j.devices || {};
     const deltas = [], shps = [];
     for (const [sn, info] of Object.entries(devs)) {

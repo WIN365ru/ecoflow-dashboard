@@ -29,6 +29,7 @@ services:
       - ALERT_MONTHLY_REPORT=${ALERT_MONTHLY_REPORT:-1}
       - ENERGY_RATE=${ENERGY_RATE:-0}
       - ENERGY_CURRENCY=${ENERGY_CURRENCY:-$}
+      - CIRCUIT_NAMES=${CIRCUIT_NAMES:-}
     volumes:
       - ecoflow-data:/data
 

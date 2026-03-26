@@ -27,6 +27,8 @@ class Config:
     # Energy cost tracking
     energy_rate: float = 0.0       # cost per kWh
     energy_currency: str = "$"     # currency symbol
+    # Circuit names (12 comma-separated names for SHP circuits)
+    circuit_names: list[str] | None = None
 
 
 def load_config(env_file: str = ".env") -> Config:
@@ -75,4 +77,15 @@ def load_config(env_file: str = ".env") -> Config:
         telegram_chat_id=os.environ.get("TELEGRAM_CHAT_ID", ""),
         energy_rate=float(os.environ.get("ENERGY_RATE", "0")),
         energy_currency=os.environ.get("ENERGY_CURRENCY", "$"),
+        circuit_names=_parse_circuit_names(os.environ.get("CIRCUIT_NAMES", "")),
     )
+
+
+def _parse_circuit_names(raw: str) -> list[str] | None:
+    if not raw:
+        return None
+    names = [n.strip() for n in raw.split(",")]
+    # Pad to 12 if fewer provided
+    while len(names) < 12:
+        names.append("")
+    return names[:12]

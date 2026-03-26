@@ -156,7 +156,8 @@ def main() -> None:
         console.print(f"Starting web dashboard v{__version__} on http://0.0.0.0:{args.web_port}")
         try:
             run_web(mqtt_client, device_types, device_names, port=args.web_port, db_path=args.db,
-                    alerter=alerter, energy_rate=config.energy_rate, energy_currency=config.energy_currency)
+                    alerter=alerter, energy_rate=config.energy_rate, energy_currency=config.energy_currency,
+                    circuit_names=config.circuit_names)
         except KeyboardInterrupt:
             pass
         finally:
@@ -175,7 +176,8 @@ def main() -> None:
 
         try:
             run_dashboard(mqtt_client, device_types, device_names, version_checker=version_checker, alerter=alerter,
-                          energy_rate=config.energy_rate, energy_currency=config.energy_currency)
+                          energy_rate=config.energy_rate, energy_currency=config.energy_currency,
+                          circuit_names=config.circuit_names)
         except KeyboardInterrupt:
             pass
         finally:
