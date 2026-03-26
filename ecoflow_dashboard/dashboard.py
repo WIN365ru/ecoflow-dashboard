@@ -280,9 +280,10 @@ def _build_delta_pro_panel(sn: str, data: dict, name: str, device_type: str = DE
             Text("PV Power (V×A)", style="dim"),
             Text(f"{pv_calc:.1f} W") if pv_calc > 0 else Text("--"),
         )
-        # Solar efficiency (only meaningful when solar is active and no AC)
-        if solar_in > 1 and not ac_in:
-            mppt_eff = (mppt_out / solar_in * 100) if mppt_out > 0 and solar_in > 0 else 0
+        # Solar efficiency (only meaningful when solar is active, no AC)
+        is_solar_only = solar_in > 1 and not ac_in
+        if is_solar_only:
+            mppt_eff = min(100, (mppt_out / solar_in * 100)) if mppt_out > 0 and solar_in > 0 else 0
             batt_charge_w = abs(batt_amp_raw) * batt_vol_raw / 1e6 if batt_amp_raw > 0 else 0
             solar_batt_eff = (batt_charge_w / solar_in * 100) if batt_charge_w > 0 and solar_in > 0 else 0
             eff_color = "green" if mppt_eff >= 95 else "yellow" if mppt_eff >= 85 else "red"
