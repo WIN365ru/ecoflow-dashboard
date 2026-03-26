@@ -716,16 +716,16 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
     # 2-column circuit table: left=circuits 1-6, right=circuits 7-12
     ct = Table(show_header=True, show_edge=False, pad_edge=True, title="Circuits", padding=(0, 1))
     ct.add_column("#", style="dim", width=3, justify="right")
-    ct.add_column("Name", width=9)
+    ct.add_column("Name", width=12)
     ct.add_column("Power", justify="right", width=8)
     ct.add_column("Mode", width=5)
-    ct.add_column("Priority", justify="center", width=8)
-    ct.add_column("  │", style="dim", width=3)
+    ct.add_column("Pri", justify="center", width=4)
+    ct.add_column("│", style="dim", width=1)
     ct.add_column("#", style="dim", width=3, justify="right")
-    ct.add_column("Name", width=9)
+    ct.add_column("Name", width=12)
     ct.add_column("Power", justify="right", width=8)
     ct.add_column("Mode", width=5)
-    ct.add_column("Priority", justify="center", width=8)
+    ct.add_column("Pri", justify="center", width=4)
 
     for row_idx in range(6):
         row = []
@@ -740,7 +740,7 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
             power_markup = f"{_fmt_watts(w)}{eff_txt}" if eff_txt else _fmt_watts(w)
             row.extend([
                 str(idx + 1),
-                Text(ch_name[:8] if ch_name else "", style="cyan" if idx >= 10 else "dim"),
+                Text(ch_name[:12] if ch_name else "", style="cyan" if idx >= 10 else ""),
                 Text.from_markup(power_markup) if eff_txt else Text(_fmt_watts(w), style=w_style),
                 Text(mode_txt, style="dim"),
                 Text(pri_txt, style="dim"),
