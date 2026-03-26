@@ -272,11 +272,13 @@ def _build_delta_pro_panel(sn: str, data: dict, name: str, device_type: str = DE
             Text("PV Voltage", style="dim"),
             Text(f"{mppt_in_vol:.1f} V") if mppt_in_vol > 0 else Text("--"),
         )
+        # Calculate PV efficiency if both input and output available
+        pv_calc = mppt_in_vol * mppt_in_amp
         solar_t.add_row(
             Text("PV Current", style="dim"),
-            Text(f"{mppt_in_amp:.1f} A") if mppt_in_amp > 0 else Text("--"),
-            Text("MPPT Out", style="dim"),
-            Text(f"{mppt_out_vol:.1f}V {mppt_out_amp:.1f}A") if mppt_out_vol > 0 else Text("--"),
+            Text(f"{mppt_in_amp:.2f} A") if mppt_in_amp > 0 else Text("--"),
+            Text("PV Power (V×A)", style="dim"),
+            Text(f"{pv_calc:.1f} W") if pv_calc > 0 else Text("--"),
         )
         chg_types = {0: "Off", 1: "Solar", 2: "AC", 3: "AC+Solar"}
         chg_str = chg_types.get(mppt_chg_type, str(mppt_chg_type))
@@ -354,7 +356,7 @@ def _build_delta_pro_panel(sn: str, data: dict, name: str, device_type: str = DE
     stats.add_row(
         Text("Current", style="dim"),
         Text(f"{batt_amp:+.1f} A", style="green" if batt_amp > 0 else "red" if batt_amp < 0 else "dim"),
-        Text("DC Bus", style="dim"), Text(_fmt_watts(mppt_out), style="dim" if not mppt_out else ""),
+        Text("DC Converter", style="dim"), Text(_fmt_watts(mppt_out), style="dim" if not mppt_out else ""),
     )
     stats.add_row(
         Text("Cell V", style="dim"),

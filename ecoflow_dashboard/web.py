@@ -807,7 +807,7 @@ function buildDeltaPro(sn, name, d) {
       <span class="stat-label">Total In</span><span class="stat-value stat-green">${fmtW(totalIn)}</span>
       <span class="stat-label">Total Out</span><span class="stat-value stat-red">${fmtW(totalOut)}</span>
       <span class="stat-label">${timeLabel}</span><span class="stat-value">${timeVal}</span>
-      <span class="stat-label">DC Bus</span><span class="stat-value">${fmtW(dcBus)}</span>
+      <span class="stat-label">DC Converter</span><span class="stat-value">${fmtW(dcBus)}</span>
       <span class="stat-label">Voltage</span><span class="stat-value">${volts.toFixed(1)} V</span>
       <span class="stat-label">Current</span><span class="stat-value" style="color:var(${current>0?'--green':'--red'})">${current.toFixed(1)} A</span>
       <span class="stat-label">Cell V</span><span class="stat-value">${minV.toFixed(2)}-${maxV.toFixed(2)}V <span style="color:var(${delta<=20?'--green':delta<=50?'--yellow':'--red'});">\u0394${delta}mV</span></span>
@@ -822,8 +822,8 @@ function buildDeltaPro(sn, name, d) {
     ${hasSolar?`<div class="section-title">Solar / MPPT</div><div class="stats">
       <span class="stat-label">PV Input</span><span class="stat-value stat-green">${fmtW(solarIn)}</span>
       <span class="stat-label">PV Voltage</span><span class="stat-value">${pvVol>0?pvVol.toFixed(1)+' V':'--'}</span>
-      <span class="stat-label">PV Current</span><span class="stat-value">${pvAmp>0?pvAmp.toFixed(1)+' A':'--'}</span>
-      <span class="stat-label">MPPT Out</span><span class="stat-value">${mpptOutV>0?mpptOutV.toFixed(1)+'V '+mpptOutA.toFixed(1)+'A':'--'}</span>
+      <span class="stat-label">PV Current</span><span class="stat-value">${pvAmp>0?pvAmp.toFixed(2)+' A':'--'}</span>
+      <span class="stat-label">PV Power (V×A)</span><span class="stat-value">${pvVol*pvAmp>0?(pvVol*pvAmp).toFixed(1)+' W':'--'}</span>
       <span class="stat-label">Source</span><span class="stat-value">${mpptChgType}</span>
       <span class="stat-label">MPPT Hours</span><span class="stat-value">${mpptUsedH>0?mpptUsedH+'h':'--'}</span>
       ${mpptFault?'<span class="stat-label">Fault</span><span class="stat-value" style="color:var(--red)">Code '+mpptFault+'</span>':''}
