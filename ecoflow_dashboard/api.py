@@ -8,9 +8,20 @@ import time
 import uuid
 from dataclasses import dataclass
 
+import logging
+
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from .config import AUTH_PRIVATE, AUTH_PUBLIC, Config
+
+log = logging.getLogger(__name__)
+
+# Session with automatic retries for transient failures
+_session = requests.Session()
+_retry = Retry(total=3, backoff_factor=2, status_forcelist=[502, 503, 504])
+_session.mount("https://", HTTPAdapter(max_retries=_retry))
 
 
 @dataclass
@@ -70,7 +81,7 @@ def _sign_request(
 def _public_get(config: Config, path: str, params: dict | None = None) -> dict:
     headers = _sign_request(config.access_key, config.secret_key, params)
     url = f"https://{config.api_host}{path}"
-    resp = requests.get(url, headers=headers, params=params, timeout=15)
+    resp = _session.get(url, headers=headers, params=params, timeout=30)
     resp.raise_for_status()
     body = resp.json()
     if str(body.get("code")) != "0":
@@ -99,7 +110,7 @@ def _private_login(config: Config) -> tuple[str, str]:
         "scene": "IOT_APP",
         "userType": "ECOFLOW",
     }
-    resp = requests.post(url, json=payload, timeout=15)
+    resp = _session.post(url, json=payload, timeout=30)
     resp.raise_for_status()
     body = resp.json()
     if str(body.get("code")) != "0":
@@ -115,7 +126,7 @@ def _private_get(config: Config, path: str, params: dict | None = None) -> dict:
     token, _ = _private_login(config)
     url = f"https://{config.api_host}{path}"
     headers = {"Authorization": f"Bearer {token}"}
-    resp = requests.get(url, headers=headers, params=params, timeout=15)
+    resp = _session.get(url, headers=headers, params=params, timeout=30)
     resp.raise_for_status()
     body = resp.json()
     if str(body.get("code")) != "0":
@@ -162,7 +173,7 @@ def fetch_mqtt_credentials(config: Config) -> MqttCredentials:
         token, user_id = _private_login(config)
         url = f"https://{config.api_host}/iot-auth/app/certification"
         headers = {"Authorization": f"Bearer {token}"}
-        resp = requests.get(url, headers=headers, timeout=15)
+        resp = _session.get(url, headers=headers, timeout=30)
         resp.raise_for_status()
         body = resp.json()
         if str(body.get("code")) != "0":
