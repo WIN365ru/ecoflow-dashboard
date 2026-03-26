@@ -26,42 +26,42 @@ EcoFlow Dashboard  v0.9.13  MQTT Connected  TG ✓  2026-03-26 09:30:55
 +-----------------------------------------+-----------------------------------------+
 | ########################--------------- | ################################------- |
 |                                         |                                         |
-| Solar In  44 W (52.5V 0.8A) AC In 0 W  | Solar In       0 W  AC In        0 W   |
-| AC Out         0 W  12V/Car Out    0 W  | AC Out         0 W  12V/Car Out  0 W   |
-| Total In      44 W  Total Out      0 W  | Total In       0 W  Total Out    0 W   |
+| Solar In  44 W (52.5V 0.8A) AC In 0 W   | Solar In       0 W  AC In        0 W    |
+| AC Out         0 W  12V/Car Out    0 W  | AC Out         0 W  12V/Car Out  0 W    |
+| Total In      44 W  Total Out      0 W  | Total In       0 W  Total Out    0 W    |
 |                                         |                                         |
 | Solar / MPPT                            |                                         |
 | PV Input      44 W  PV Voltage  52.5 V  |                                         |
 | PV Current  0.84 A  PV Power    44.1 W  |                                         |
 | MPPT Eff      97%   Solar→Batt    69%   |                                         |
-| Charge Source Solar  Max DC Cur    8 A   |                                         |
+| Charge Source Solar  Max DC Cur    8 A  |                                         |
 | Lifetime   926 kWh  MPPT Hours   4482h  |                                         |
 |                                         |                                         |
 | Charge Time  1d 0h  Voltage     50.5 V  | Idle Time        --  Voltage    49.8 V  |
 | Current     +0.6 A  DC Conv      45 W   | Current      -0.1 A  DC Conv     1.4 W  |
-| Cell V  3.35-3.37V  Δ22mV  24-24°C     | Cell V  3.30-3.33V  Δ30mV  24-24°C     |
-| Batt/Inv   24/30°C  MPPT/MOS  42/24°C  | Batt/Inv   24/28°C  MPPT/MOS  30/25°C  |
-| Cycles       569  Limits   10% - 100%  | Cycles       655  Limits   10% - 100%  |
+| Cell V  3.35-3.37V  Δ22mV  24-24°C      | Cell V  3.30-3.33V  Δ30mV  24-24°C      |
+| Batt/Inv   24/30°C  MPPT/MOS  42/24°C   | Batt/Inv   24/28°C  MPPT/MOS  30/25°C   |
+| Cycles       569  Limits   10% - 100%   | Cycles       655  Limits   10% - 100%   |
 | Fan      Off (Lv1)  Beep           ON   | Fan      Off (Auto)  Beep          ON   |
 |                                         |                                         |
-| PD 1.2.0.156  MPPT 3.1.0.50            | PD 1.2.0.156  MPPT 3.1.0.50            |
-| BMS 1.1.5.35  Inv 2.1.1.158            | BMS 1.1.5.35  Inv 2.1.1.158            |
+| PD 1.2.0.156  MPPT 3.1.0.50             | PD 1.2.0.156  MPPT 3.1.0.50             |
+| BMS 1.1.5.35  Inv 2.1.1.158             | BMS 1.1.5.35  Inv 2.1.1.158             |
 |                                         |                                         |
 | Lifetime Energy                         | Lifetime Energy                         |
-| AC Chg  1919 kWh  Solar  926 kWh       | AC Chg  2590 kWh  Solar  426 kWh       |
-| AC Dsg  2189 kWh  DC Dsg  13 kWh       | AC Dsg  2254 kWh  DC Dsg   6 kWh       |
-| Health: 94% (Excellent) 3.17/3.81 kWh  | Health: 93% (Excellent) 3.31/3.68 kWh  |
+| AC Chg  1919 kWh  Solar  926 kWh        | AC Chg  2590 kWh  Solar  426 kWh        |
+| AC Dsg  2189 kWh  DC Dsg  13 kWh        | AC Dsg  2254 kWh  DC Dsg   6 kWh        |
+| Health: 94% (Excellent) 3.17/3.81 kWh   | Health: 93% (Excellent) 3.31/3.68 kWh   |
 +-----------------------------------------+-----------------------------------------+
 
 +------------------------ Smart Home Panel (SP10ZEWXXXXXXXX) -----------------------+
 | Grid         ON (230V 50Hz)  Grid Today  6.85 kWh ($0.55) (Day: $0.10)            |
 | Combined  87%  6.41 kWh     Limits       --     Sched Chg         OFF             |
-|                                                                                    |
-| Batt 1: 91% 3.28 kWh 25°C  Standby                        Chg:9d 8h              |
-| Batt 2: 83% 3.00 kWh 23°C  Standby                        Chg:8d 15h             |
-|                                                                                    |
-|                            Circuits                                                |
-| #  Name          Power  Mode Pri │ #  Name          Power  Mode Pri                |
+|                                                                                   |
+| Batt 1: 91% 3.28 kWh 25°C  Standby                        Chg:9d 8h               |
+| Batt 2: 83% 3.00 kWh 23°C  Standby                        Chg:8d 15h              |
+|                                                                                   |
+|                            Circuits                                               |
+| #  Name          Power  Mode Pri │ #  Name          Power  Mode Pri               |
 | 1  Подвал        165 W  Auto  -  │ 7  Свет2\Су       0 W  Auto  6                 |
 | 2  Кабинет       735 W  Auto  1  │ 8  Столовая      35 W  Auto  7                 |
 | 3  Кухня           0 W  Auto  2  │ 9  Кабинет\      45 W  Auto  8                 |
