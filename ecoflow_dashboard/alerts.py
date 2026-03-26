@@ -101,18 +101,25 @@ class AlertManager:
         self._cooldowns[key] = time.time()
         return True
 
-    def _send(self, text: str) -> None:
-        """Send a Telegram message (Markdown format)."""
+    def _send(self, text: str, retries: int = 3) -> None:
+        """Send a Telegram message (Markdown format) with retry."""
         url = f"https://api.telegram.org/bot{self._token}/sendMessage"
-        try:
-            requests.post(url, json={
-                "chat_id": self._chat_id,
-                "text": text,
-                "parse_mode": "Markdown",
-            }, timeout=10)
-            log.info("Telegram alert sent: %s", text[:80])
-        except Exception:
-            log.exception("Failed to send Telegram alert")
+        for attempt in range(retries):
+            try:
+                r = requests.post(url, json={
+                    "chat_id": self._chat_id,
+                    "text": text,
+                    "parse_mode": "Markdown",
+                }, timeout=15)
+                if r.ok:
+                    log.info("Telegram alert sent: %s", text[:80])
+                    return
+                log.warning("Telegram API error: %s %s", r.status_code, r.text[:100])
+            except Exception as e:
+                log.warning("Telegram send attempt %d/%d failed: %s", attempt + 1, retries, e)
+                if attempt < retries - 1:
+                    time.sleep(5 * (attempt + 1))  # 5s, 10s backoff
+        log.error("Failed to send Telegram alert after %d attempts", retries)
 
     def _device_label(self, sn: str) -> str:
         dtype = self._device_types.get(sn, "")
