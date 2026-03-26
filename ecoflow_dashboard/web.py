@@ -153,6 +153,36 @@ def api_command() -> Response:
     return Response(json.dumps({"result": result or "no action"}), content_type="application/json")
 
 
+@app.route("/api/circuit-toggle", methods=["POST"])
+def api_circuit_toggle() -> Response:
+    """Toggle a specific SHP circuit on/off."""
+    if not _mqtt:
+        return Response(json.dumps({"error": "not ready"}), status=503, content_type="application/json")
+    body = request.get_json(silent=True) or {}
+    sn = body.get("sn", "")
+    ch = body.get("circuit")
+    if not sn or ch is None:
+        return Response(json.dumps({"error": "sn and circuit required"}), status=400, content_type="application/json")
+    ch = int(ch)
+    if ch < 0 or ch > 11:
+        return Response(json.dumps({"error": "circuit must be 0-11"}), status=400, content_type="application/json")
+    data = _mqtt.get_device_data(sn)
+    mode = data.get(f"loadCmdChCtrlInfos.{ch}.ctrlMode", 0)
+    try:
+        mode = int(float(mode))
+    except (TypeError, ValueError):
+        mode = 0
+    if mode == 1:
+        # Manual → restore to Auto
+        _mqtt.send_command(sn, {"cmdSet": 11, "id": 16, "ch": ch, "ctrlMode": 0, "sta": 0})
+        result = f"Circuit {ch+1} → Auto"
+    else:
+        # Auto → Manual OFF
+        _mqtt.send_command(sn, {"cmdSet": 11, "id": 16, "ch": ch, "ctrlMode": 1, "sta": 1})
+        result = f"Circuit {ch+1} → OFF"
+    return Response(json.dumps({"result": result}), content_type="application/json")
+
+
 @app.route("/api/live")
 def api_live() -> Response:
     """Return live ring buffer data for charts."""
@@ -755,6 +785,17 @@ async function sendCmd(sn, key) {
   } catch(e) { toast('error: '+e.message); }
 }
 
+async function toggleCircuit(sn, ch) {
+  try {
+    const r = await fetch('/api/circuit-toggle', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({sn, circuit: ch})
+    });
+    const j = await r.json();
+    toast(j.result || 'toggled');
+  } catch(e) { toast('error: '+e.message); }
+}
+
 function buildDeltaPro(sn, name, d) {
   const soc = g(d,'ems.lcdShowSoc','ems.f32LcdShowSoc','bmsMaster.f32ShowSoc','bmsMaster.soc');
   const soh = g(d,'bmsMaster.soh');
@@ -902,7 +943,10 @@ function buildSHP(sn, name, d, allDevices) {
       const dpIdx = i - 10;
       if (dpIdx < dpList.length) label = 'DP.'+dpList[dpIdx][0].slice(-4);
     }
-    circuitHTML += `<tr${cls}><td>${i+1}</td><td>${label}</td><td class="power">${fmtW(w)}</td></tr>`;
+    const cMode = g(d,`loadCmdChCtrlInfos.${i}.ctrlMode`);
+    const isOff = cMode === 1;
+    const offStyle = isOff ? ' style="opacity:0.4;text-decoration:line-through"' : '';
+    circuitHTML += `<tr${cls}${offStyle}><td>${i+1}</td><td>${label}</td><td class="power">${fmtW(w)}</td><td><button class="btn" style="padding:2px 6px;font-size:10px" onclick="toggleCircuit('${sn}',${i})">${isOff?'ON':'OFF'}</button></td></tr>`;
   }
 
   // Battery details
@@ -952,11 +996,12 @@ function buildSHP(sn, name, d, allDevices) {
     </div>
     ${battHTML}
     <div class="section-title" style="margin-top:8px">Circuits</div>
-    <table class="circuits"><tr><th>#</th><th>Name</th><th style="text-align:right">Power</th></tr>${circuitHTML}</table>
+    <table class="circuits"><tr><th>#</th><th>Name</th><th style="text-align:right">Power</th><th></th></tr>${circuitHTML}</table>
     <div class="controls">
       <button class="btn ${eps?'btn-on':'btn-off'}" onclick="sendCmd('${sn}','e')">EPS ${eps?'ON':'OFF'}</button>
       <button class="btn" onclick="sendCmd('${sn}','g')">Grid Chg B1</button>
       <button class="btn" onclick="sendCmd('${sn}','h')">Grid Chg B2</button>
+      <button class="btn" onclick="sendCmd('${sn}','p')">⚡ Power Save</button>
     </div>
   </div>`;
 }

@@ -48,6 +48,8 @@ SHP_COMMANDS: dict[str, Command] = {
     "e": Command("EPS Mode",       "eps",                24, "eps",          "toggle", cmd_set=11),
     "g": Command("Grid Charge B1", "backupCmdChCtrlInfos.0.ctrlSta", 17, "",     "shp_grid_charge_1", cmd_set=11),
     "h": Command("Grid Charge B2", "backupCmdChCtrlInfos.1.ctrlSta", 17, "",     "shp_grid_charge_2", cmd_set=11),
+    "p": Command("Power Save",     "",                               16, "",     "shp_power_save", cmd_set=11),
+    "t": Command("Circuit Toggle",  "",                              16, "",     "shp_circuit_toggle", cmd_set=11),
 }
 
 # Default AC charge power to restore when un-pausing
@@ -82,6 +84,16 @@ class DeviceController:
 
     def handle_key(self, key: str, sn: str) -> str:
         """Process a keypress. Returns status message or empty string."""
+        import os
+
+        # Check if we're waiting for a circuit number after 't'
+        if os.environ.get("_SHP_CIRCUIT_TARGET") == "-1" and key.isdigit():
+            circuit = int(key)
+            if circuit == 0:
+                circuit = 10  # '0' key = circuit 10
+            os.environ["_SHP_CIRCUIT_TARGET"] = str(circuit)
+            return self.handle_key("t", sn)  # Re-trigger toggle
+
         commands = self.get_commands(sn)
         cmd = commands.get(key)
         if not cmd:
@@ -136,6 +148,65 @@ class DeviceController:
             else:
                 params = {"cmdSet": 11, "id": 17, "ch": ch, "sta": 2, "ctrlMode": 1}
                 val_txt = "ON"
+
+        elif cmd.action == "shp_circuit_toggle":
+            # Toggle the currently selected circuit (use priority as circuit selector)
+            # Key 't' then a digit 1-9,0 to toggle that circuit
+            import os
+            target = int(os.environ.get("_SHP_CIRCUIT_TARGET", "0"))
+            if target < 1 or target > 12:
+                # Store request for next keypress — set target to -1 to indicate "waiting"
+                os.environ["_SHP_CIRCUIT_TARGET"] = "-1"
+                return "Circuit Toggle: press 1-9 or 0 for circuit #"
+            ch = target - 1  # 0-indexed
+            mode = data.get(f"loadCmdChCtrlInfos.{ch}.ctrlMode", 0)
+            try:
+                mode = int(float(mode))
+            except (TypeError, ValueError):
+                mode = 0
+            if mode == 1:
+                # Currently manual — restore to auto
+                params = {"cmdSet": 11, "id": 16, "ch": ch, "ctrlMode": 0, "sta": 0}
+                val_txt = f"Circuit {target} → Auto"
+            else:
+                # Auto → manual OFF
+                params = {"cmdSet": 11, "id": 16, "ch": ch, "ctrlMode": 1, "sta": 1}
+                val_txt = f"Circuit {target} → OFF"
+            os.environ["_SHP_CIRCUIT_TARGET"] = "0"
+
+        elif cmd.action == "shp_power_save":
+            # Toggle power save mode: disable all circuits with priority > 5 (non-essential)
+            import os
+            power_save = os.environ.get("_SHP_POWER_SAVE", "0")
+            if power_save == "0":
+                # Enable power save — turn off circuits with priority >= 5
+                count = 0
+                for i in range(10):  # circuits 1-10 (not DP 11-12)
+                    pri = data.get(f"loadCmdChCtrlInfos.{i}.priority", 0)
+                    try:
+                        pri = int(float(pri))
+                    except (TypeError, ValueError):
+                        pri = 0
+                    if pri >= 5:
+                        self._mqtt.send_command(sn, {"cmdSet": 11, "id": 16, "ch": i, "ctrlMode": 1, "sta": 1})
+                        count += 1
+                os.environ["_SHP_POWER_SAVE"] = "1"
+                val_txt = f"Power Save ON ({count} circuits off)"
+                params = None  # already sent
+            else:
+                # Disable power save — restore all to auto
+                for i in range(10):
+                    mode = data.get(f"loadCmdChCtrlInfos.{i}.ctrlMode", 0)
+                    try:
+                        mode = int(float(mode))
+                    except (TypeError, ValueError):
+                        mode = 0
+                    if mode == 1:  # manual — restore to auto
+                        self._mqtt.send_command(sn, {"cmdSet": 11, "id": 16, "ch": i, "ctrlMode": 0, "sta": 0})
+                os.environ["_SHP_POWER_SAVE"] = "0"
+                val_txt = "Power Save OFF (all circuits auto)"
+                params = None
+            return f"{cmd.label} → {val_txt}"
 
         elif cmd.action.startswith("+"):
             step = int(cmd.action[1:])
