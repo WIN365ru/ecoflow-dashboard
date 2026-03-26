@@ -1,8 +1,14 @@
 # Portainer Stack — set env vars in Portainer UI
-# Required environment variables:
+# Required:
 #   ECOFLOW_EMAIL        — your EcoFlow app email
 #   ECOFLOW_PASSWORD     — your EcoFlow app password
 #   ECOFLOW_DEVICE_SNS   — comma-separated serial numbers
+# Optional (Telegram alerts):
+#   TELEGRAM_BOT_TOKEN   — from @BotFather
+#   TELEGRAM_CHAT_ID     — your chat ID
+#   ALERT_DAILY_SUMMARY  — hour for daily summary (0-23, default: 20)
+#   ALERT_BATTERY_LOW    — SOC % threshold (default: 20)
+#   ALERT_HIGH_TEMP      — °C threshold (default: 45)
 
 services:
   ecoflow-dashboard:
@@ -15,6 +21,11 @@ services:
       - ECOFLOW_EMAIL=${ECOFLOW_EMAIL}
       - ECOFLOW_PASSWORD=${ECOFLOW_PASSWORD}
       - ECOFLOW_DEVICE_SNS=${ECOFLOW_DEVICE_SNS}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - ALERT_DAILY_SUMMARY=${ALERT_DAILY_SUMMARY:-20}
+      - ALERT_BATTERY_LOW=${ALERT_BATTERY_LOW:-20}
+      - ALERT_HIGH_TEMP=${ALERT_HIGH_TEMP:-45}
     volumes:
       - ecoflow-data:/data
 
