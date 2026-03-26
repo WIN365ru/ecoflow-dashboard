@@ -5,7 +5,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY ecoflow_dashboard/ ecoflow_dashboard/
 
-RUN pip install --no-cache-dir .
+RUN pip install --upgrade pip && pip install --no-cache-dir .
 
 VOLUME /data
 
