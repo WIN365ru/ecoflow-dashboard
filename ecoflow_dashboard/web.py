@@ -825,7 +825,7 @@ function buildDeltaPro(sn, name, d) {
     <div class="card-title">Delta Pro <span style="color:var(--dim);font-size:11px">(${sn.slice(-6)})</span>${solarIn>0?' <span style="color:var(--yellow)">☀</span>':''}</div>
     <div class="soc soc-${c}">${Math.round(soc)}%</div>
     <div class="bar-bg"><div class="bar-fill bar-${c}" style="width:${Math.min(100,Math.max(0,soc))}%"></div></div>
-    <div class="health health-${sohC}">Health: ${Math.round(soh)}% (${sohLabel}) &nbsp; ${remainWh>0?remainWh.toFixed(1)+' / '+fullWh.toFixed(1)+' kWh':''}</div>
+    <div class="health health-${sohC}">Health: ${Math.round(soh)}% (${sohLabel}) &nbsp; ${remainWh>0?(remainWh/1000).toFixed(2)+' / '+(fullWh/1000).toFixed(2)+' kWh':''}</div>
     <div class="stats">
       <span class="stat-label">Solar In</span><span class="stat-value stat-green">${fmtW(solarIn)}${pvVol>1?' <span style="color:var(--dim)">('+pvVol.toFixed(1)+'V '+pvAmp.toFixed(1)+'A)</span>':''}</span>
       <span class="stat-label">AC In</span><span class="stat-value stat-green">${fmtW(acIn)}${acIn>0?' ('+Math.round(acVolt)+'V '+acFreq+')':''}</span>
