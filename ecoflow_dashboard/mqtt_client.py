@@ -5,6 +5,7 @@ import logging
 import random
 import ssl
 import threading
+import time as _time
 import uuid
 
 import paho.mqtt.client as mqtt
@@ -42,6 +43,7 @@ class EcoFlowMqttClient:
         self._auth_mode = auth_mode
         self._lock = threading.Lock()
         self._data: dict[str, dict[str, object]] = {sn: {} for sn in device_sns}
+        self._last_update: dict[str, float] = {sn: 0.0 for sn in device_sns}
         self._connected = False
         # Map topic → SN for fast lookup
         self._topic_sn: dict[str, str] = {}
@@ -168,6 +170,12 @@ class EcoFlowMqttClient:
 
         with self._lock:
             self._data[sn].update(flat)
+            self._last_update[sn] = _time.time()
+
+    def last_update_age(self, sn: str) -> float:
+        """Seconds since last MQTT message for this device."""
+        ts = self._last_update.get(sn, 0.0)
+        return _time.time() - ts if ts > 0 else float("inf")
 
     def _on_disconnect(self, client: mqtt.Client, userdata: object, flags: mqtt.DisconnectFlags, rc: mqtt.ReasonCode, properties: mqtt.Properties | None = None) -> None:
         self._connected = False
