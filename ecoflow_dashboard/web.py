@@ -6,7 +6,7 @@ import sqlite3
 import threading
 import time as _time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Flask, Response, request
 
@@ -136,11 +136,13 @@ def api_history() -> Response:
         time_clause = "AND timestamp >= ?"
         time_params = (start,)
     elif hours:
-        time_clause = "AND timestamp >= datetime('now', ?)"
-        time_params = (f"-{int(hours)} hours",)
+        cutoff = (datetime.now() - timedelta(hours=int(hours))).isoformat(timespec="seconds")
+        time_clause = "AND timestamp >= ?"
+        time_params = (cutoff,)
     else:
-        time_clause = "AND timestamp >= datetime('now', ?)"
-        time_params = ("-24 hours",)
+        cutoff = (datetime.now() - timedelta(hours=24)).isoformat(timespec="seconds")
+        time_clause = "AND timestamp >= ?"
+        time_params = (cutoff,)
 
     try:
         with sqlite3.connect(_db_path) as conn:
