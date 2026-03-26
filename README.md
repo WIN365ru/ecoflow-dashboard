@@ -146,22 +146,38 @@ cd ecoflow-dashboard
 pip install -e .
 ```
 
-### Option B: Docker
+### Option B: Docker (pre-built image)
 
 ```bash
-git clone https://github.com/WIN365ru/ecoflow-dashboard.git
-cd ecoflow-dashboard
-cp .env.example .env   # fill in credentials
-docker compose up -d
+# Pull from GitHub Container Registry
+docker pull ghcr.io/win365ru/ecoflow-dashboard:latest
+
+# Create .env with your credentials, then run:
+docker run -d --name ecoflow-dashboard \
+  --env-file .env \
+  -p 5000:5000 \
+  -v ecoflow-data:/data \
+  --restart unless-stopped \
+  ghcr.io/win365ru/ecoflow-dashboard:latest
 # Web dashboard at http://localhost:5000
 ```
 
-### Option C: Portainer Stack
+### Option C: Docker Compose
 
-1. In Portainer: **Stacks** > **Add stack** > **Repository**
-2. Repository URL: `https://github.com/WIN365ru/ecoflow-dashboard`
+```bash
+# Download compose file and create .env
+curl -O https://raw.githubusercontent.com/WIN365ru/ecoflow-dashboard/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/WIN365ru/ecoflow-dashboard/main/.env.example
+cp .env.example .env   # fill in credentials
+docker compose up -d
+```
+
+### Option D: Portainer Stack
+
+1. In Portainer: **Stacks** > **Add stack**
+2. Paste the `docker-compose.yml` contents (uses `ghcr.io/win365ru/ecoflow-dashboard:latest`)
 3. Add environment variables (see Configuration below)
-4. Deploy -- dashboard at `http://<server-ip>:5000`
+4. Deploy — dashboard at `http://<server-ip>:5000`
 
 ## Configuration
 

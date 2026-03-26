@@ -1,6 +1,7 @@
 services:
   ecoflow-dashboard:
-    build: .
+    image: ghcr.io/win365ru/ecoflow-dashboard:latest
+    # build: .  # uncomment to build locally instead
     container_name: ecoflow-dashboard
     restart: unless-stopped
     ports:
