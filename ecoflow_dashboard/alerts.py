@@ -19,7 +19,9 @@ DEFAULTS = {
     "ALERT_BATTERY_LOW": "20",       # SOC % threshold
     "ALERT_BATTERY_FULL": "1",
     "ALERT_CHARGE_COMPLETE": "1",
-    "ALERT_HIGH_TEMP": "45",         # °C threshold
+    "ALERT_HIGH_TEMP_BATTERY": "45",   # °C — battery cells
+    "ALERT_HIGH_TEMP_INVERTER": "85",  # °C — inverter (normal up to ~80)
+    "ALERT_HIGH_TEMP_MPPT": "70",      # °C — MPPT charge controller
     "ALERT_OFFLINE_TIMEOUT": "300",  # seconds
     "ALERT_COOLDOWN": "1800",        # 30 min between repeated alerts
     "ALERT_DAILY_SUMMARY": "20",     # Hour (0-23) to send daily summary, empty to disable
@@ -64,11 +66,10 @@ class AlertManager:
 
         # Thresholds
         self._battery_low = _env_int("ALERT_BATTERY_LOW")
-        self._high_temp = _env_int("ALERT_HIGH_TEMP")
+        self._high_temp_battery = _env_int("ALERT_HIGH_TEMP_BATTERY")
+        self._high_temp_inverter = _env_int("ALERT_HIGH_TEMP_INVERTER")
+        self._high_temp_mppt = _env_int("ALERT_HIGH_TEMP_MPPT")
         self._offline_timeout = _env_int("ALERT_OFFLINE_TIMEOUT")
-
-        # Track last data timestamp per device
-        self._last_data_ts: dict[str, float] = {}
 
         # Telegram connection status
         self._telegram_ok: bool = False
@@ -249,12 +250,12 @@ class AlertManager:
             prev = self._prev.get(sn, {})
             label = self._device_label(sn)
 
-            # ── Device offline detection ──
-            if data != self._prev.get(sn):
-                self._last_data_ts[sn] = now
-            elif now - self._last_data_ts.get(sn, now) > self._offline_timeout:
+            # ── Device offline detection (use MQTT heartbeat, not data comparison) ──
+            age = self._mqtt.last_update_age(sn)
+            # Skip if never received data yet (startup) or MQTT disconnected
+            if age != float("inf") and self._mqtt.connected and age > self._offline_timeout:
                 if self._can_alert(f"offline:{sn}"):
-                    mins = int((now - self._last_data_ts[sn]) / 60)
+                    mins = int(age / 60)
                     self._send(f"🔴 *DEVICE OFFLINE*\n{label}\nNo data for {mins} min")
 
             if "panel" in dtype:
@@ -397,19 +398,18 @@ class AlertManager:
                 if self._can_alert(f"chg_done:{sn}"):
                     self._send(f"⚡ *CHARGING COMPLETE*\n{label}\nSOC: {soc:.0f}% at {ts}")
 
-        # ── High temperature ──
-        if self._high_temp > 0:
-            temps = {
-                "Battery": self._get_float(data, "bmsMaster.temp"),
-                "Inverter": self._get_float(data, "inv.outTemp"),
-                "MPPT": self._get_float(data, "mppt.mpptTemp"),
-            }
-            for name, t in temps.items():
-                if t > self._high_temp:
-                    if self._can_alert(f"high_temp:{sn}:{name}"):
-                        self._send(
-                            f"🌡️ *HIGH TEMPERATURE*\n{label}\n{name}: {t:.0f}°C (threshold: {self._high_temp}°C)"
-                        )
+        # ── High temperature (per-sensor thresholds) ──
+        temp_checks = [
+            ("Battery", self._get_float(data, "bmsMaster.temp"), self._high_temp_battery),
+            ("Inverter", self._get_float(data, "inv.outTemp"), self._high_temp_inverter),
+            ("MPPT", self._get_float(data, "mppt.mpptTemp"), self._high_temp_mppt),
+        ]
+        for name, t, threshold in temp_checks:
+            if threshold > 0 and t > threshold:
+                if self._can_alert(f"high_temp:{sn}:{name}"):
+                    self._send(
+                        f"🌡️ *HIGH TEMPERATURE*\n{label}\n{name}: {t:.0f}°C (threshold: {threshold}°C)"
+                    )
 
     def _check_daily_summary(self) -> None:
         """Send daily summary at configured hour."""

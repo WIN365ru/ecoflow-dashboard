@@ -64,12 +64,39 @@ class EcoFlowMqttClient:
         self._client.on_message = self._on_message
         self._client.on_disconnect = self._on_disconnect
 
+        # Keepalive thread to re-request state if data goes stale
+        self._stop_keepalive = threading.Event()
+        self._keepalive_thread: threading.Thread | None = None
+
     def start(self) -> None:
         log.info("Connecting to MQTT %s:%d", self._creds.host, self._creds.port)
         self._client.connect(self._creds.host, self._creds.port, keepalive=15)
         self._client.loop_start()
+        # Start keepalive for Private API (re-requests stale data)
+        if self._auth_mode == AUTH_PRIVATE:
+            self._keepalive_thread = threading.Thread(target=self._keepalive_loop, daemon=True)
+            self._keepalive_thread.start()
+
+    def _keepalive_loop(self) -> None:
+        """Periodically re-request device state if MQTT data is stale.
+        EcoFlow's broker sometimes silently stops pushing data — this
+        keeps it flowing by sending a 'get' request every 2 minutes
+        for any device that hasn't received an update in 90s.
+        """
+        while not self._stop_keepalive.is_set():
+            self._stop_keepalive.wait(120)
+            if self._stop_keepalive.is_set() or not self._connected:
+                continue
+            for sn in self._device_sns:
+                age = self.last_update_age(sn)
+                if age == float("inf") or age > 90:
+                    try:
+                        self._request_device_state(self._client, sn)
+                    except Exception as e:
+                        log.warning("Keepalive request failed for %s: %s", sn, e)
 
     def stop(self) -> None:
+        self._stop_keepalive.set()
         self._client.loop_stop()
         self._client.disconnect()
 
