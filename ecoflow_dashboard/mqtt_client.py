@@ -79,17 +79,42 @@ class EcoFlowMqttClient:
 
     def _keepalive_loop(self) -> None:
         """Periodically re-request device state if MQTT data is stale.
-        EcoFlow's broker sometimes silently stops pushing data — this
-        keeps it flowing by sending a 'get' request every 2 minutes
-        for any device that hasn't received an update in 90s.
+        EcoFlow's broker only pushes data to 'active subscribers' — the
+        mobile app keeps devices alive by polling. We mimic that.
+
+        Strategy:
+        - First 60s after start: re-request every 10s until each device responds
+        - After all responding: every 60s for any device > 60s stale
         """
+        # Aggressive initial activation: re-request every 10s for ~1 min
+        initial_attempts = 0
+        while initial_attempts < 6 and not self._stop_keepalive.is_set():
+            self._stop_keepalive.wait(10)
+            if self._stop_keepalive.is_set():
+                return
+            if not self._connected:
+                continue
+            need_request = False
+            for sn in self._device_sns:
+                age = self.last_update_age(sn)
+                if age == float("inf") or age > 60:
+                    try:
+                        self._request_device_state(self._client, sn)
+                        need_request = True
+                    except Exception as e:
+                        log.warning("Activation request failed for %s: %s", sn, e)
+            initial_attempts += 1
+            if not need_request:
+                break  # All devices responding — switch to slow keepalive
+
+        # Steady-state keepalive: every 60s, re-request stale devices
         while not self._stop_keepalive.is_set():
-            self._stop_keepalive.wait(120)
+            self._stop_keepalive.wait(60)
             if self._stop_keepalive.is_set() or not self._connected:
                 continue
             for sn in self._device_sns:
                 age = self.last_update_age(sn)
-                if age == float("inf") or age > 90:
+                if age == float("inf") or age > 60:
                     try:
                         self._request_device_state(self._client, sn)
                     except Exception as e:
