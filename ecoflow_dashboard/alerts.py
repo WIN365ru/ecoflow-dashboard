@@ -135,7 +135,7 @@ class AlertManager:
             elif "blade" in dtype:
                 BLADE_STATES = {0x500: "Idle", 0x501: "Standby", 0x502: "Mowing",
                                 0x503: "Returning", 0x504: "Charging", 0x505: "Mapping",
-                                0x506: "Paused", 0x507: "Error"}
+                                0x506: "Paused", 0x507: "Error", 0x801: "Charging"}
                 battery = self._get_float(data, "normalBleHeartBeat.batteryRemainPercent")
                 state_code = int(self._get_float(data, "normalBleHeartBeat.robotState"))
                 state = BLADE_STATES.get(state_code, f"0x{state_code:X}")
@@ -433,7 +433,7 @@ class AlertManager:
         BLADE_STATES = {
             0x500: "Idle", 0x501: "Standby", 0x502: "Mowing",
             0x503: "Returning", 0x504: "Charging", 0x505: "Mapping",
-            0x506: "Paused", 0x507: "Error",
+            0x506: "Paused", 0x507: "Error", 0x801: "Charging",
         }
         BLADE_ERRORS = {
             2001: "Motor overload", 2002: "Bumper triggered",
@@ -449,9 +449,9 @@ class AlertManager:
             now_label = BLADE_STATES.get(state_now, f"0x{state_now:X}")
             prev_label = BLADE_STATES.get(state_prev, f"0x{state_prev:X}")
             # Only notify on meaningful transitions
-            interesting = state_now in (0x502, 0x503, 0x504, 0x507) or state_prev == 0x502
+            interesting = state_now in (0x502, 0x503, 0x504, 0x507, 0x801) or state_prev == 0x502
             if interesting and self._can_alert(f"blade_state:{sn}:{state_now}"):
-                emoji = {0x502: "🌱", 0x503: "🏠", 0x504: "🔌", 0x507: "⚠️"}.get(state_now, "🤖")
+                emoji = {0x502: "🌱", 0x503: "🏠", 0x504: "🔌", 0x507: "⚠️", 0x801: "🔌"}.get(state_now, "🤖")
                 self._send(f"{emoji} *BLADE {now_label.upper()}*\n{label}\n{prev_label} → {now_label}")
 
         # ── Battery low (mower-specific threshold, more urgent) ──

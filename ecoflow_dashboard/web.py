@@ -1015,6 +1015,7 @@ const BLADE_STATES = {
   0x505: ['Mapping', '#a855f7'],
   0x506: ['Paused', '#eab308'],
   0x507: ['Error', '#ef4444'],
+  0x801: ['Charging', '#3b82f6'],
 };
 const BLADE_ERRORS = {
   2062: 'RTK signal lost (cleared)', 2001: 'Motor overload', 2002: 'Bumper triggered',
@@ -1136,10 +1137,19 @@ function initBladeMaps(blades) {
     if (!lat || !lng) continue;
 
     if (window.bladeMaps[sn]) {
-      // Update marker positions
-      window.bladeMaps[sn].robot.setLatLng([lat, lng]);
-      if (blat && blng) window.bladeMaps[sn].base.setLatLng([blat, blng]);
-    } else {
+      // The dashboard innerHTML rewrite on each refresh detaches the old map
+      // div — drop the stale Leaflet instance and rebuild on the new element.
+      const oldContainer = window.bladeMaps[sn].map.getContainer();
+      if (oldContainer !== el || !document.body.contains(oldContainer)) {
+        try { window.bladeMaps[sn].map.remove(); } catch(e){}
+        delete window.bladeMaps[sn];
+      } else {
+        window.bladeMaps[sn].robot.setLatLng([lat, lng]);
+        if (blat && blng && window.bladeMaps[sn].base) window.bladeMaps[sn].base.setLatLng([blat, blng]);
+        continue;
+      }
+    }
+    {
       const map = L.map(id, {zoomControl: true, attributionControl: false}).setView([lat, lng], 18);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19}).addTo(map);
       const robotIcon = L.divIcon({

@@ -33,6 +33,7 @@ BLADE_STATES = {
     0x505: ("Mapping", "magenta"),
     0x506: ("Paused", "yellow"),
     0x507: ("Error", "red"),
+    0x801: ("Charging", "blue"),
 }
 
 # Blade error code translations (extend as discovered)

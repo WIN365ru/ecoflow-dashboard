@@ -220,6 +220,33 @@ class TelegramBot:
                     f"🏠 *{label}*: *{combined:.0f}%* {grid_str}{stale}\n"
                     f"    Load: {total_load:.0f}W  Grid today: {grid_day/1000:.1f}kWh"
                 )
+            elif "blade" in dtype:
+                BLADE_STATES = {
+                    0x500: "Idle", 0x501: "Standby", 0x502: "Mowing",
+                    0x503: "Returning", 0x504: "Charging", 0x505: "Mapping",
+                    0x506: "Paused", 0x507: "Error", 0x801: "Charging",
+                }
+                battery = self._gf(data, "normalBleHeartBeat.batteryRemainPercent")
+                state_code = int(self._gf(data, "normalBleHeartBeat.robotState"))
+                state = BLADE_STATES.get(state_code, f"0x{state_code:X}")
+                err_count = int(self._gf(data, "normalBleHeartBeat.errorCount"))
+                rain_cd = int(self._gf(data, "normalBleHeartBeat.rainCountdown"))
+                rtk_state = int(self._gf(data, "normalBleHeartBeat.rtkState"))
+                rtk_label = {0:"no fix",1:"single",2:"DGPS",3:"RTK float",4:"RTK fixed"}.get(rtk_state, "?")
+                work_area = self._gf(data, "normalBleHeartBeat.currentWorkArea")
+                work_prog = int(self._gf(data, "normalBleHeartBeat.currentWorkProgress"))
+                extras = []
+                if work_area > 0:
+                    extras.append(f"Job: {work_area:.1f}m² ({work_prog}%)")
+                if rain_cd > 0:
+                    extras.append(f"🌧️ {rain_cd}s")
+                if err_count > 0:
+                    extras.append(f"⚠️ {err_count} err")
+                extras_str = ("\n    " + "  ".join(extras)) if extras else ""
+                lines.append(
+                    f"🤖 *{label}*: *{battery:.0f}%* {state}{stale}\n"
+                    f"    RTK: {rtk_label}{extras_str}"
+                )
 
         ts = datetime.now().strftime("%H:%M")
         self._send(f"📊 *Status* ({ts})\n\n" + "\n\n".join(lines))
@@ -509,6 +536,8 @@ class TelegramBot:
             return f"Delta Pro ({short})"
         if "panel" in dtype:
             return f"Smart Panel ({short})"
+        if "blade" in dtype:
+            return f"Blade ({short})"
         return sn
 
     def _gf(self, data: dict, *keys: str) -> float:
