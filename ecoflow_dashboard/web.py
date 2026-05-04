@@ -1006,6 +1006,157 @@ function buildSHP(sn, name, d, allDevices) {
   </div>`;
 }
 
+const BLADE_STATES = {
+  0x500: ['Idle', '#888'],
+  0x501: ['Standby', '#06b6d4'],
+  0x502: ['Mowing', '#10b981'],
+  0x503: ['Returning', '#eab308'],
+  0x504: ['Charging', '#3b82f6'],
+  0x505: ['Mapping', '#a855f7'],
+  0x506: ['Paused', '#eab308'],
+  0x507: ['Error', '#ef4444'],
+};
+const BLADE_ERRORS = {
+  2062: 'RTK signal lost (cleared)', 2001: 'Motor overload', 2002: 'Bumper triggered',
+  2003: 'Lifted from ground', 2004: 'Stuck', 2005: 'Battery overheat',
+  2006: 'Rain detected', 2007: 'GPS lost', 2008: 'Out of mowing zone',
+};
+const RTK_STATES = {0:'no fix',1:'single',2:'DGPS',3:'RTK float',4:'RTK fixed'};
+
+function buildBlade(sn, name, d) {
+  const battery = g(d, 'normalBleHeartBeat.batteryRemainPercent');
+  const stateCode = g(d, 'normalBleHeartBeat.robotState') | 0;
+  const [stateLabel, stateColor] = BLADE_STATES[stateCode] || [`Unknown(0x${stateCode.toString(16)})`, '#fff'];
+  const battColor = battery >= 60 ? '#10b981' : battery >= 20 ? '#eab308' : '#ef4444';
+
+  const wifi = g(d, 'signalInfo.wifiSignal');
+  const sig4g = g(d, 'signalInfo.4gSignal');
+  let connStr = '<span style="color:#888">Offline</span>';
+  if (wifi) {
+    const dbm = -Math.abs(wifi|0);
+    const c = dbm > -65 ? '#10b981' : dbm > -80 ? '#eab308' : '#ef4444';
+    connStr = `<span style="color:${c}">📶 WiFi ${dbm}dBm</span>`;
+  } else if (sig4g) {
+    connStr = `<span style="color:#06b6d4">📡 4G ${-Math.abs(sig4g|0)}dBm</span>`;
+  }
+
+  const rtkScore = g(d, 'normalBleHeartBeat.robotRtkScore');
+  const rtkBaseScore = g(d, 'normalBleHeartBeat.baseRtkScore');
+  const rtkState = g(d, 'normalBleHeartBeat.rtkState') | 0;
+  const sats = g(d, 'signalInfo.trackedSatellites') | 0;
+  const poseX = g(d, 'normalBleHeartBeat.poseX') | 0;
+  const poseY = g(d, 'normalBleHeartBeat.poseY') | 0;
+  const angle = g(d, 'normalBleHeartBeat.angle') | 0;
+
+  const robotLat = g(d, 'signalInfo.robotLat');
+  const robotLng = g(d, 'signalInfo.robotLng');
+  const baseLat = g(d, 'signalInfo.baseLat');
+  const baseLng = g(d, 'signalInfo.baseLng');
+  const hasGps = robotLat && robotLng;
+
+  const workArea = g(d, 'normalBleHeartBeat.currentWorkArea');
+  const workTime = g(d, 'normalBleHeartBeat.currentWorkTime') | 0;
+  const workProg = g(d, 'normalBleHeartBeat.currentWorkProgress') | 0;
+  const edgeTotal = g(d, 'normalBleHeartBeat.edgeTotal') | 0;
+  const edgeCur = g(d, 'normalBleHeartBeat.edgeCurrent') | 0;
+  const mapArea = g(d, 'normalBleHeartBeat.mappingArea');
+  const mapDist = g(d, 'normalBleHeartBeat.mappingDistance');
+  const rainCd = g(d, 'normalBleHeartBeat.rainCountdown') | 0;
+  const errCount = g(d, 'normalBleHeartBeat.errorCount') | 0;
+  const errLow = g(d, 'normalBleHeartBeat.robotLowerr') | 0;
+
+  const showJob = workArea > 0 || workTime > 0 || edgeTotal > 0 || mapArea > 0;
+  const rtkColor = rtkState === 4 ? '#10b981' : rtkState >= 2 ? '#eab308' : '#ef4444';
+
+  let flags = '';
+  if (rainCd > 0) flags += `<div style="color:#eab308">🌧️ Rain delay: ${rainCd}s</div>`;
+  if (errCount > 0) flags += `<div style="color:#ef4444"><b>⚠️ ${errCount} active error(s)</b></div>`;
+  else if (errLow && errLow !== 1281 && BLADE_ERRORS[errLow]) flags += `<div style="color:#eab308">⚠️ ${BLADE_ERRORS[errLow]}</div>`;
+
+  const mapId = `bladeMap_${sn.replace(/[^a-zA-Z0-9]/g,'')}`;
+
+  return `<div class="card">
+    <div class="card-header">
+      <h3>🤖 Blade <span class="dim">(${name})</span></h3>
+      <div class="status-line">
+        <span style="color:${stateColor};font-weight:600">${stateLabel}</span>
+        <span class="dim">·</span>
+        <span style="color:${battColor};font-weight:600">${battery|0}%</span>
+        <span class="dim">·</span>
+        ${connStr}
+      </div>
+    </div>
+    <div class="battery-bar"><div class="battery-fill" style="width:${battery|0}%;background:${battColor}"></div></div>
+    <table class="kv">
+      <tr><td>RTK Status</td><td><span style="color:${rtkColor}">${RTK_STATES[rtkState]||'?'}</span></td>
+          <td>Satellites</td><td>${sats}</td></tr>
+      <tr><td>RTK Score</td><td>Robot ${rtkScore|0} / Base ${rtkBaseScore|0}</td>
+          <td>Position</td><td>(${poseX}, ${poseY}) ${angle}°</td></tr>
+      ${hasGps ? `<tr><td>📍 Robot GPS</td><td>${robotLat.toFixed(5)}, ${robotLng.toFixed(5)}</td>
+          <td>📍 Base GPS</td><td>${baseLat.toFixed(5)}, ${baseLng.toFixed(5)}</td></tr>` : ''}
+    </table>
+    ${showJob ? `<table class="kv" style="margin-top:8px">
+      <tr><td>Work Area</td><td>${workArea.toFixed(1)} m²</td>
+          <td>Progress</td><td>${workProg}%</td></tr>
+      <tr><td>Work Time</td><td>${workTime} min</td>
+          <td>Edge Cut</td><td>${edgeCur} / ${edgeTotal}</td></tr>
+      ${mapArea > 0 ? `<tr><td>Mapped Area</td><td>${mapArea.toFixed(1)} m²</td>
+          <td>Map Distance</td><td>${mapDist.toFixed(1)} m</td></tr>` : ''}
+    </table>` : ''}
+    ${flags ? `<div style="margin-top:8px">${flags}</div>` : ''}
+    ${hasGps ? `<div id="${mapId}" data-lat="${robotLat}" data-lng="${robotLng}" data-blat="${baseLat}" data-blng="${baseLng}"
+                    style="height:280px;margin-top:12px;border-radius:8px;background:#1a1a1a"></div>` : ''}
+  </div>`;
+}
+
+function initBladeMaps(blades) {
+  // Lazy-load Leaflet from CDN
+  if (!window.L) {
+    if (document.getElementById('leaflet-css')) return setTimeout(() => initBladeMaps(blades), 200);
+    const css = document.createElement('link');
+    css.id = 'leaflet-css';
+    css.rel = 'stylesheet';
+    css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(css);
+    const js = document.createElement('script');
+    js.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    js.onload = () => initBladeMaps(blades);
+    document.head.appendChild(js);
+    return;
+  }
+  if (!window.bladeMaps) window.bladeMaps = {};
+  for (const [sn, info] of blades) {
+    const id = `bladeMap_${sn.replace(/[^a-zA-Z0-9]/g,'')}`;
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const lat = parseFloat(el.dataset.lat);
+    const lng = parseFloat(el.dataset.lng);
+    const blat = parseFloat(el.dataset.blat);
+    const blng = parseFloat(el.dataset.blng);
+    if (!lat || !lng) continue;
+
+    if (window.bladeMaps[sn]) {
+      // Update marker positions
+      window.bladeMaps[sn].robot.setLatLng([lat, lng]);
+      if (blat && blng) window.bladeMaps[sn].base.setLatLng([blat, blng]);
+    } else {
+      const map = L.map(id, {zoomControl: true, attributionControl: false}).setView([lat, lng], 18);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19}).addTo(map);
+      const robotIcon = L.divIcon({
+        html: '<div style="background:#10b981;color:#fff;border-radius:50%;width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-size:18px;border:2px solid #000;box-shadow:0 0 8px #10b981">🤖</div>',
+        iconSize: [32, 32], iconAnchor: [16, 16], className: ''
+      });
+      const baseIcon = L.divIcon({
+        html: '<div style="background:#3b82f6;color:#fff;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid #000;box-shadow:0 0 8px #3b82f6">🏠</div>',
+        iconSize: [28, 28], iconAnchor: [14, 14], className: ''
+      });
+      const robot = L.marker([lat, lng], {icon: robotIcon, title: 'Robot'}).addTo(map);
+      const base = (blat && blng) ? L.marker([blat, blng], {icon: baseIcon, title: 'Base Station'}).addTo(map) : null;
+      window.bladeMaps[sn] = {map, robot, base};
+    }
+  }
+}
+
 async function refresh() {
   try {
     const r = await fetch('/api/devices');
@@ -1034,10 +1185,11 @@ async function refresh() {
     window.energyCfg = j.energy || null;
     window.circuitNames = j.circuit_names || null;
     const devs = j.devices || {};
-    const deltas = [], shps = [];
+    const deltas = [], shps = [], blades = [];
     for (const [sn, info] of Object.entries(devs)) {
       if (info.type.includes('delta')) deltas.push([sn, info]);
       else if (info.type.includes('panel')) shps.push([sn, info]);
+      else if (info.type.includes('blade')) blades.push([sn, info]);
     }
 
     let html = '<div class="grid grid-2">';
@@ -1048,7 +1200,12 @@ async function refresh() {
     for (const [sn, info] of shps) {
       html += '<div class="grid">' + buildSHP(sn, info.name, info.data, devs) + '</div>';
     }
+    for (const [sn, info] of blades) {
+      html += '<div class="grid">' + buildBlade(sn, info.name, info.data) + '</div>';
+    }
     $('#dashboard').innerHTML = html;
+    // Initialize maps after DOM update
+    if (blades.length) initBladeMaps(blades);
     updateDeviceSelector(devs);
   } catch(e) {
     console.error('refresh error', e);

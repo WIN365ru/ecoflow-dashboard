@@ -15,10 +15,37 @@ from .mqtt_client import EcoFlowMqttClient
 # Device type constants
 DELTA_PRO = "delta_pro"
 SMART_HOME_PANEL = "smart_home_panel"
+BLADE = "blade"
 
 DEVICE_TYPE_LABELS = {
     DELTA_PRO: "Delta Pro",
     SMART_HOME_PANEL: "Smart Home Panel",
+    BLADE: "Blade",
+}
+
+# Blade robot state codes (decoded from observed values)
+BLADE_STATES = {
+    0x500: ("Idle", "dim"),
+    0x501: ("Standby", "cyan"),
+    0x502: ("Mowing", "green"),
+    0x503: ("Returning", "yellow"),
+    0x504: ("Charging", "blue"),
+    0x505: ("Mapping", "magenta"),
+    0x506: ("Paused", "yellow"),
+    0x507: ("Error", "red"),
+}
+
+# Blade error code translations (extend as discovered)
+BLADE_ERRORS = {
+    2062: "RTK signal lost (cleared)",
+    2001: "Motor overload",
+    2002: "Bumper triggered",
+    2003: "Lifted from ground",
+    2004: "Stuck",
+    2005: "Battery overheat",
+    2006: "Rain detected",
+    2007: "GPS lost",
+    2008: "Out of mowing zone",
 }
 
 
@@ -809,6 +836,176 @@ def _build_shp_panel(sn: str, data: dict, name: str, device_type: str = SMART_HO
     )
 
 
+def _build_blade_panel(sn: str, data: dict, name: str) -> Panel:
+    """Build a panel for the EcoFlow Blade robotic mower."""
+    type_label = DEVICE_TYPE_LABELS.get(BLADE, "Blade")
+
+    def _f(*keys: str) -> float:
+        for k in keys:
+            v = data.get(k)
+            if v is None:
+                continue
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                continue
+        return 0.0
+
+    def _s(*keys: str) -> str:
+        for k in keys:
+            v = data.get(k)
+            if v is not None:
+                return str(v)
+        return ""
+
+    # Robot state
+    robot_state = int(_f("normalBleHeartBeat.robotState"))
+    state_label, state_color = BLADE_STATES.get(robot_state, (f"Unknown(0x{robot_state:X})", "white"))
+
+    # Battery
+    battery = _f("normalBleHeartBeat.batteryRemainPercent")
+    if battery >= 60:
+        batt_color = "green"
+    elif battery >= 20:
+        batt_color = "yellow"
+    else:
+        batt_color = "red"
+    batt_bar = ProgressBar(total=100, completed=max(0, min(100, battery)),
+                           style=batt_color, complete_style=batt_color)
+
+    # Connection / signals
+    wifi = _f("signalInfo.wifiSignal")
+    sig_4g = _f("signalInfo.4gSignal")
+    rtk_robot = _f("normalBleHeartBeat.robotRtkScore")
+    rtk_base = _f("normalBleHeartBeat.baseRtkScore")
+    rtk_state = int(_f("normalBleHeartBeat.rtkState"))
+    sats = int(_f("signalInfo.trackedSatellites"))
+
+    # Position (relative to base, in cm or unknown unit)
+    pose_x = _f("normalBleHeartBeat.poseX")
+    pose_y = _f("normalBleHeartBeat.poseY")
+    pose_angle = _f("normalBleHeartBeat.angle")
+
+    # GPS
+    robot_lat = _f("signalInfo.robotLat")
+    robot_lng = _f("signalInfo.robotLng")
+    base_lat = _f("signalInfo.baseLat")
+    base_lng = _f("signalInfo.baseLng")
+
+    # Mowing job stats
+    work_area = _f("normalBleHeartBeat.currentWorkArea")
+    work_time = _f("normalBleHeartBeat.currentWorkTime")
+    work_progress = _f("normalBleHeartBeat.currentWorkProgress")
+    edge_total = _f("normalBleHeartBeat.edgeTotal")
+    edge_current = _f("normalBleHeartBeat.edgeCurrent")
+    map_area = _f("normalBleHeartBeat.mappingArea")
+    map_dist = _f("normalBleHeartBeat.mappingDistance")
+    rain_countdown = _f("normalBleHeartBeat.rainCountdown")
+
+    # Errors
+    error_count = int(_f("normalBleHeartBeat.errorCount"))
+    err_low = int(_f("normalBleHeartBeat.robotLowerr"))
+
+    # Connection status (based on signals)
+    if wifi:
+        # WiFi reported as positive number - negate for dBm
+        wifi_dbm = -abs(int(wifi))
+        if wifi_dbm > -65:
+            conn_str = f"[green]WiFi {wifi_dbm}dBm[/]"
+        elif wifi_dbm > -80:
+            conn_str = f"[yellow]WiFi {wifi_dbm}dBm[/]"
+        else:
+            conn_str = f"[red]WiFi {wifi_dbm}dBm[/]"
+    elif sig_4g:
+        sig_dbm = -abs(int(sig_4g))
+        conn_str = f"[cyan]4G {sig_dbm}dBm[/]"
+    else:
+        conn_str = "[dim]Offline[/]"
+
+    # Status header
+    state_line = Text.from_markup(
+        f"  State: [{state_color} bold]{state_label}[/]  Battery: [{batt_color} bold]{int(battery)}%[/]  {conn_str}"
+    )
+
+    # Stats grid
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(min_width=18)
+    grid.add_column(min_width=18, justify="right")
+    grid.add_column(min_width=18)
+    grid.add_column(min_width=18, justify="right")
+
+    rtk_state_label = {0: "no fix", 1: "single", 2: "DGPS", 3: "RTK float", 4: "RTK fixed"}.get(rtk_state, f"state {rtk_state}")
+    rtk_color = "green" if rtk_state == 4 else "yellow" if rtk_state >= 2 else "red"
+
+    grid.add_row(
+        Text("RTK Status", style="dim"), Text.from_markup(f"[{rtk_color}]{rtk_state_label}[/]"),
+        Text("Satellites", style="dim"), Text(str(sats)),
+    )
+    grid.add_row(
+        Text("RTK Score", style="dim"), Text(f"Robot {int(rtk_robot)} / Base {int(rtk_base)}"),
+        Text("Position", style="dim"), Text(f"({int(pose_x)}, {int(pose_y)}) {int(pose_angle)}°"),
+    )
+
+    # GPS line (if available)
+    gps_line = None
+    if robot_lat and robot_lng:
+        # Mask precision for privacy in display
+        gps_line = Text.from_markup(
+            f"  📍 GPS: [cyan]{robot_lat:.5f}°, {robot_lng:.5f}°[/]  "
+            f"Base: [dim]{base_lat:.5f}°, {base_lng:.5f}°[/]"
+        )
+
+    # Mowing job grid (only show if there's an active job or stats)
+    job_grid = None
+    if work_area > 0 or work_time > 0 or edge_total > 0 or map_area > 0:
+        job_grid = Table.grid(padding=(0, 2))
+        job_grid.add_column(min_width=18)
+        job_grid.add_column(min_width=18, justify="right")
+        job_grid.add_column(min_width=18)
+        job_grid.add_column(min_width=18, justify="right")
+        job_grid.add_row(
+            Text("Work Area", style="dim"), Text(f"{work_area:.1f} m²"),
+            Text("Progress", style="dim"), Text(f"{int(work_progress)}%"),
+        )
+        job_grid.add_row(
+            Text("Work Time", style="dim"), Text(f"{int(work_time)} min"),
+            Text("Edge Cut", style="dim"), Text(f"{int(edge_current)} / {int(edge_total)}"),
+        )
+        if map_area > 0:
+            job_grid.add_row(
+                Text("Mapped Area", style="dim"), Text(f"{map_area:.1f} m²"),
+                Text("Map Distance", style="dim"), Text(f"{map_dist:.1f} m"),
+            )
+
+    # Status flags
+    flags = []
+    if rain_countdown > 0:
+        flags.append(Text.from_markup(f"  🌧️ [yellow]Rain delay: {int(rain_countdown)}s[/]"))
+    if error_count > 0:
+        flags.append(Text.from_markup(f"  ⚠️ [red bold]{error_count} active error(s)[/]"))
+    elif err_low and err_low not in (1281,):  # 1281 is also robotState, often duplicated
+        err_msg = BLADE_ERRORS.get(err_low, f"code {err_low}")
+        flags.append(Text.from_markup(f"  ⚠️ [yellow]{err_msg}[/]"))
+
+    # Assemble
+    elements: list = [state_line, batt_bar, ""]
+    if gps_line:
+        elements.append(gps_line)
+    elements.append(grid)
+    if job_grid:
+        elements.extend(["", job_grid])
+    if flags:
+        elements.append("")
+        elements.extend(flags)
+
+    return Panel(
+        Group(*elements),
+        title=f"[bold]🤖 {type_label}[/bold] [white]({sn})[/white]",
+        subtitle=f"[bold {batt_color}]{int(battery)}%[/]",
+        border_style="green",
+    )
+
+
 def _build_help_bar(
     commands: dict,
     selected_sn: str,
@@ -889,6 +1086,8 @@ def build_dashboard(
             delta_pro_data.append((sn, data))
         elif dtype == SMART_HOME_PANEL:
             pass  # build after collecting Delta Pro data
+        elif dtype == BLADE:
+            other_panels.append(_build_blade_panel(sn, data, name))
         else:
             other_panels.append(Panel(f"Unknown device type: {dtype}", title=sn))
 

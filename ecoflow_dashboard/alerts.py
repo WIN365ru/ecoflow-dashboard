@@ -132,6 +132,14 @@ class AlertManager:
                 grid = self._get_float(data, "gridSta", "heartbeat.gridSta")
                 grid_str = "Grid ✅" if grid else "Grid ❌"
                 dev_list.append(f"  • {label}: *{combined:.0f}%* {grid_str}")
+            elif "blade" in dtype:
+                BLADE_STATES = {0x500: "Idle", 0x501: "Standby", 0x502: "Mowing",
+                                0x503: "Returning", 0x504: "Charging", 0x505: "Mapping",
+                                0x506: "Paused", 0x507: "Error"}
+                battery = self._get_float(data, "normalBleHeartBeat.batteryRemainPercent")
+                state_code = int(self._get_float(data, "normalBleHeartBeat.robotState"))
+                state = BLADE_STATES.get(state_code, f"0x{state_code:X}")
+                dev_list.append(f"  • {label}: *{battery:.0f}%* 🤖 {state}")
             else:
                 dev_list.append(f"  • {label}")
 
@@ -235,7 +243,14 @@ class AlertManager:
 
     def _device_label(self, sn: str) -> str:
         dtype = self._device_types.get(sn, "")
-        label = "Delta Pro" if "delta" in dtype else "Smart Home Panel" if "panel" in dtype else dtype
+        if "delta" in dtype:
+            label = "Delta Pro"
+        elif "panel" in dtype:
+            label = "Smart Home Panel"
+        elif "blade" in dtype:
+            label = "Blade"
+        else:
+            label = dtype
         return f"{label} ({sn[-6:]})"
 
     def _check_all(self) -> None:
@@ -262,6 +277,8 @@ class AlertManager:
                 self._check_shp(sn, data, prev, label, ts)
             elif "delta" in dtype:
                 self._check_delta(sn, data, prev, label, ts)
+            elif "blade" in dtype:
+                self._check_blade(sn, data, prev, label, ts)
 
             # Save current state
             self._prev[sn] = dict(data)
@@ -410,6 +427,65 @@ class AlertManager:
                     self._send(
                         f"🌡️ *HIGH TEMPERATURE*\n{label}\n{name}: {t:.0f}°C (threshold: {threshold}°C)"
                     )
+
+    def _check_blade(self, sn: str, data: dict, prev: dict, label: str, ts: str) -> None:
+        """Alerts for the EcoFlow Blade robotic mower."""
+        BLADE_STATES = {
+            0x500: "Idle", 0x501: "Standby", 0x502: "Mowing",
+            0x503: "Returning", 0x504: "Charging", 0x505: "Mapping",
+            0x506: "Paused", 0x507: "Error",
+        }
+        BLADE_ERRORS = {
+            2001: "Motor overload", 2002: "Bumper triggered",
+            2003: "Lifted from ground", 2004: "Stuck",
+            2005: "Battery overheat", 2006: "Rain detected",
+            2007: "GPS lost", 2008: "Out of mowing zone",
+        }
+
+        # ── State change ──
+        state_now = int(self._get_float(data, "normalBleHeartBeat.robotState"))
+        state_prev = int(self._get_float(prev, "normalBleHeartBeat.robotState"))
+        if state_now != state_prev and state_prev != 0 and prev:
+            now_label = BLADE_STATES.get(state_now, f"0x{state_now:X}")
+            prev_label = BLADE_STATES.get(state_prev, f"0x{state_prev:X}")
+            # Only notify on meaningful transitions
+            interesting = state_now in (0x502, 0x503, 0x504, 0x507) or state_prev == 0x502
+            if interesting and self._can_alert(f"blade_state:{sn}:{state_now}"):
+                emoji = {0x502: "🌱", 0x503: "🏠", 0x504: "🔌", 0x507: "⚠️"}.get(state_now, "🤖")
+                self._send(f"{emoji} *BLADE {now_label.upper()}*\n{label}\n{prev_label} → {now_label}")
+
+        # ── Battery low (mower-specific threshold, more urgent) ──
+        battery = self._get_float(data, "normalBleHeartBeat.batteryRemainPercent")
+        battery_prev = self._get_float(prev, "normalBleHeartBeat.batteryRemainPercent")
+        for threshold in (30, 15, 5):
+            if battery <= threshold < battery_prev and prev:
+                if self._can_alert(f"blade_batt:{sn}:{threshold}"):
+                    emoji = "🪫" if threshold <= 15 else "🔋"
+                    self._send(f"{emoji} *BLADE BATTERY {int(battery)}%*\n{label}\nNeeds to charge soon")
+                break
+
+        # ── Errors ──
+        err_count = int(self._get_float(data, "normalBleHeartBeat.errorCount"))
+        err_count_prev = int(self._get_float(prev, "normalBleHeartBeat.errorCount"))
+        if err_count > err_count_prev and prev:
+            err_low = int(self._get_float(data, "normalBleHeartBeat.robotLowerr"))
+            err_msg = BLADE_ERRORS.get(err_low, f"code {err_low}")
+            if self._can_alert(f"blade_err:{sn}:{err_low}"):
+                self._send(f"⚠️ *BLADE ERROR*\n{label}\n{err_msg}\nActive errors: {err_count}")
+
+        # ── Rain delay started ──
+        rain_now = self._get_float(data, "normalBleHeartBeat.rainCountdown")
+        rain_prev = self._get_float(prev, "normalBleHeartBeat.rainCountdown")
+        if rain_now > 0 and rain_prev == 0 and prev:
+            if self._can_alert(f"blade_rain:{sn}"):
+                self._send(f"🌧️ *BLADE RAIN DELAY*\n{label}\nWaiting {int(rain_now)}s for rain to clear")
+
+        # ── RTK signal lost (rtkState dropped from 4) ──
+        rtk_now = int(self._get_float(data, "normalBleHeartBeat.rtkState"))
+        rtk_prev = int(self._get_float(prev, "normalBleHeartBeat.rtkState"))
+        if rtk_prev == 4 and rtk_now < 2 and prev:
+            if self._can_alert(f"blade_rtk:{sn}"):
+                self._send(f"🛰️ *BLADE RTK LOST*\n{label}\nGPS quality degraded — mowing may pause")
 
     def _check_daily_summary(self) -> None:
         """Send daily summary at configured hour."""

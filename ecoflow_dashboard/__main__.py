@@ -9,7 +9,7 @@ from rich.console import Console
 from . import __version__
 from .api import DeviceInfo, fetch_device_list, fetch_device_quota, fetch_mqtt_credentials
 from .config import AUTH_PRIVATE, load_config
-from .dashboard import DELTA_PRO, SMART_HOME_PANEL, run_dashboard
+from .dashboard import BLADE, DELTA_PRO, SMART_HOME_PANEL, run_dashboard
 from .logger import DataLogger
 from .mqtt_client import EcoFlowMqttClient
 from .version_check import VersionChecker
@@ -23,6 +23,8 @@ def _detect_type(product_name: str) -> str:
         return DELTA_PRO
     if "panel" in name:
         return SMART_HOME_PANEL
+    if "blade" in name or "mower" in name:
+        return BLADE
     return "unknown"
 
 
@@ -31,6 +33,8 @@ def _detect_type_from_sn(sn: str) -> str:
     s = sn.upper()
     if s.startswith("SP"):
         return SMART_HOME_PANEL
+    if s.startswith("H101"):
+        return BLADE
     # Delta Pro SNs vary — default to delta_pro for anything else
     return DELTA_PRO
 

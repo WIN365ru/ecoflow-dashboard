@@ -107,14 +107,19 @@ class EcoFlowMqttClient:
             if not need_request:
                 break  # All devices responding — switch to slow keepalive
 
-        # Steady-state keepalive: every 60s, re-request stale devices
+        # Steady-state keepalive: every 30s, re-request stale devices.
+        # Blade gets polled every 30s regardless (it stops sending data
+        # if not actively polled, like the iOS app does).
         while not self._stop_keepalive.is_set():
-            self._stop_keepalive.wait(60)
+            self._stop_keepalive.wait(30)
             if self._stop_keepalive.is_set() or not self._connected:
                 continue
             for sn in self._device_sns:
+                is_blade = sn.upper().startswith("H101")
                 age = self.last_update_age(sn)
-                if age == float("inf") or age > 60:
+                # Blade: poll every cycle to mimic iOS app behavior
+                # Others: only re-request if data is stale (>60s old)
+                if is_blade or age == float("inf") or age > 60:
                     try:
                         self._request_device_state(self._client, sn)
                     except Exception as e:
@@ -183,13 +188,28 @@ class EcoFlowMqttClient:
                 self._request_device_state(client, sn)
 
     def _request_device_state(self, client: mqtt.Client, sn: str) -> None:
-        """Publish a 'get all properties' message to trigger device data push."""
+        """Publish a 'get all properties' message to trigger device data push.
+        Blade (SN starts with H101) uses iOS-style 'inquire' format with
+        sessionID + type=6 — observed from the EcoFlow iOS app traffic.
+        """
         topic = f"/app/{self._creds.user_id}/{sn}/thing/property/get"
-        msg = {
-            "from": "Android",
-            "id": str(random.randint(100000, 999999)),
-            "version": "1.0",
-        }
+        if sn.upper().startswith("H101"):
+            # Blade requires iOS-style inquire packet to keep data flowing
+            msg = {
+                "from": "Android",
+                "lang": "en-us",
+                "params": {"type": 6, "sessionID": random.randint(1, 1000)},
+                "id": str(random.randint(100000, 999999)),
+                "moduleType": 23,
+                "operateType": "inquire",
+                "version": "1.0",
+            }
+        else:
+            msg = {
+                "from": "Android",
+                "id": str(random.randint(100000, 999999)),
+                "version": "1.0",
+            }
         client.publish(topic, json.dumps(msg), qos=1)
         log.info("Requested state for %s on %s", sn, topic)
 
