@@ -1213,8 +1213,43 @@ async function refresh() {
     for (const [sn, info] of blades) {
       html += '<div class="grid">' + buildBlade(sn, info.name, info.data) + '</div>';
     }
+
+    // Detach live blade map containers before innerHTML rewrite so Leaflet
+    // keeps its state (zoom, center, tiles) — otherwise the map flashes and
+    // resets zoom on every 2s refresh.
+    const liveMaps = {};
+    if (window.bladeMaps) {
+      for (const [sn, m] of Object.entries(window.bladeMaps)) {
+        const c = m.map.getContainer();
+        if (c && document.body.contains(c)) {
+          liveMaps[sn] = c;
+          c.remove();
+        }
+      }
+    }
+
     $('#dashboard').innerHTML = html;
-    // Initialize maps after DOM update
+
+    // Swap fresh empty map placeholders with the preserved live containers.
+    for (const [sn, liveEl] of Object.entries(liveMaps)) {
+      const id = `bladeMap_${sn.replace(/[^a-zA-Z0-9]/g,'')}`;
+      const placeholder = document.getElementById(id);
+      if (placeholder) {
+        // Copy fresh GPS coords from the new placeholder so initBladeMaps
+        // reads up-to-date marker positions from data-* attrs.
+        liveEl.dataset.lat = placeholder.dataset.lat;
+        liveEl.dataset.lng = placeholder.dataset.lng;
+        liveEl.dataset.blat = placeholder.dataset.blat;
+        liveEl.dataset.blng = placeholder.dataset.blng;
+        placeholder.replaceWith(liveEl);
+      } else {
+        // Blade no longer in dashboard — dispose of orphan map.
+        try { window.bladeMaps[sn].map.remove(); } catch(e){}
+        delete window.bladeMaps[sn];
+      }
+    }
+
+    // Initialize maps after DOM update (existing maps just get marker updates).
     if (blades.length) initBladeMaps(blades);
     updateDeviceSelector(devs);
   } catch(e) {
