@@ -49,6 +49,30 @@ DELTA_PRO_KEYS = [
     "mppt.mpptTemp",
 ]
 
+BLADE_KEYS = [
+    "normalBleHeartBeat.robotState",
+    "normalBleHeartBeat.batteryRemainPercent",
+    "normalBleHeartBeat.currentWorkArea",
+    "normalBleHeartBeat.currentWorkTime",
+    "normalBleHeartBeat.currentWorkProgress",
+    "normalBleHeartBeat.edgeTotal",
+    "normalBleHeartBeat.edgeCurrent",
+    "normalBleHeartBeat.mappingArea",
+    "normalBleHeartBeat.mappingDistance",
+    "normalBleHeartBeat.errorCount",
+    "normalBleHeartBeat.robotLowerr",
+    "normalBleHeartBeat.rainCountdown",
+    "normalBleHeartBeat.rtkState",
+    "normalBleHeartBeat.robotRtkScore",
+    "normalBleHeartBeat.baseRtkScore",
+    "normalBleHeartBeat.poseX",
+    "normalBleHeartBeat.poseY",
+    "normalBleHeartBeat.angle",
+    "signalInfo.wifiSignal",
+    "signalInfo.4gSignal",
+    "signalInfo.trackedSatellites",
+]
+
 SHP_KEYS = [
     # Grid
     "gridSta",
@@ -130,6 +154,26 @@ class DataLogger:
                 CREATE INDEX IF NOT EXISTS idx_outages_sn
                 ON outages (device_sn, start_time)
             """)
+            # Blade mower runs (one row per mowing session)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS mower_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    device_sn TEXT NOT NULL,
+                    start_time TEXT NOT NULL,
+                    end_time TEXT,
+                    duration_sec INTEGER,
+                    area_m2 REAL,
+                    battery_start REAL,
+                    battery_end REAL,
+                    battery_used REAL,
+                    end_state INTEGER,
+                    error_count INTEGER
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_mower_runs_sn
+                ON mower_runs (device_sn, start_time)
+            """)
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -161,7 +205,12 @@ class DataLogger:
             if not data:
                 continue
 
-            keys = DELTA_PRO_KEYS if dtype == "delta_pro" else SHP_KEYS
+            if dtype == "delta_pro":
+                keys = DELTA_PRO_KEYS
+            elif "blade" in dtype:
+                keys = BLADE_KEYS
+            else:
+                keys = SHP_KEYS
 
             for key in keys:
                 v = data.get(key)

@@ -99,6 +99,9 @@ class AlertManager:
         # Outage tracking: {sn: {start_ts, start_soc1, start_soc2, ...}}
         self._outage_state: dict[str, dict] = {}
 
+        # Active mower run tracking: {sn: {start_ts, battery_start}}
+        self._mower_run_active: dict[str, dict] = {}
+
         # Arbitrage: track current tariff period to alert on transitions
         self._current_tariff: str = ""  # "day" or "night"
 
@@ -445,6 +448,7 @@ class AlertManager:
         # ── State change ──
         state_now = int(self._get_float(data, "normalBleHeartBeat.robotState"))
         state_prev = int(self._get_float(prev, "normalBleHeartBeat.robotState"))
+        battery_now = self._get_float(data, "normalBleHeartBeat.batteryRemainPercent")
         if state_now != state_prev and state_prev != 0 and prev:
             now_label = BLADE_STATES.get(state_now, f"0x{state_now:X}")
             prev_label = BLADE_STATES.get(state_prev, f"0x{state_prev:X}")
@@ -453,6 +457,15 @@ class AlertManager:
             if interesting and self._can_alert(f"blade_state:{sn}:{state_now}"):
                 emoji = {0x502: "🌱", 0x503: "🏠", 0x504: "🔌", 0x507: "⚠️", 0x801: "🔌"}.get(state_now, "🤖")
                 self._send(f"{emoji} *BLADE {now_label.upper()}*\n{label}\n{prev_label} → {now_label}")
+
+            # Mower run tracking — entering/leaving 0x502 (Mowing).
+            if state_now == 0x502 and state_prev != 0x502:
+                self._mower_run_active[sn] = {
+                    "start_ts": datetime.now().isoformat(timespec="seconds"),
+                    "battery_start": battery_now,
+                }
+            elif state_prev == 0x502 and state_now != 0x502 and sn in self._mower_run_active:
+                self._record_mower_run_end(sn, data, state_now)
 
         # ── Battery low (mower-specific threshold, more urgent) ──
         battery = self._get_float(data, "normalBleHeartBeat.batteryRemainPercent")
@@ -486,6 +499,36 @@ class AlertManager:
         if rtk_prev == 4 and rtk_now < 2 and prev:
             if self._can_alert(f"blade_rtk:{sn}"):
                 self._send(f"🛰️ *BLADE RTK LOST*\n{label}\nGPS quality degraded — mowing may pause")
+
+    def _record_mower_run_end(self, sn: str, data: dict, end_state: int) -> None:
+        """Persist a completed mowing run (0x502 → other state) to mower_runs."""
+        run = self._mower_run_active.pop(sn, None)
+        if not run or not self._db_path:
+            return
+        try:
+            import sqlite3
+            end_ts = datetime.now().isoformat(timespec="seconds")
+            try:
+                dur = int((datetime.fromisoformat(end_ts) -
+                           datetime.fromisoformat(run["start_ts"])).total_seconds())
+            except Exception:
+                dur = 0
+            battery_end = self._get_float(data, "normalBleHeartBeat.batteryRemainPercent")
+            battery_used = max(0.0, run["battery_start"] - battery_end)
+            area = self._get_float(data, "normalBleHeartBeat.currentWorkArea")
+            err_count = int(self._get_float(data, "normalBleHeartBeat.errorCount"))
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute(
+                    "INSERT INTO mower_runs (device_sn, start_time, end_time, duration_sec, "
+                    "area_m2, battery_start, battery_end, battery_used, end_state, error_count) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (sn, run["start_ts"], end_ts, dur, area,
+                     run["battery_start"], battery_end, battery_used, end_state, err_count),
+                )
+            log.info("Mower run logged for %s: %ds, %.1fm², %.0f%% used, end=0x%X",
+                     sn, dur, area, battery_used, end_state)
+        except Exception:
+            log.exception("Failed to record mower run for %s", sn)
 
     def _check_daily_summary(self) -> None:
         """Send daily summary at configured hour."""
@@ -652,6 +695,70 @@ class AlertManager:
                         bsoc = self._get_float(data, f"energyInfos.{i}.batteryPercentage")
                         btemp = self._get_float(data, f"energyInfos.{i}.emsBatTemp")
                         lines.append(f"  Batt {i+1}: {bsoc:.0f}% | {btemp:.0f}°C")
+                lines.append("")
+
+            elif "blade" in dtype:
+                BLADE_STATES = {
+                    0x500: "Idle", 0x501: "Standby", 0x502: "Mowing",
+                    0x503: "Returning", 0x504: "Charging", 0x505: "Mapping",
+                    0x506: "Paused", 0x507: "Error", 0x801: "Charging",
+                }
+                battery = self._get_float(data, "normalBleHeartBeat.batteryRemainPercent")
+                state_code = int(self._get_float(data, "normalBleHeartBeat.robotState"))
+                state_label = BLADE_STATES.get(state_code, f"0x{state_code:X}")
+                err_count = int(self._get_float(data, "normalBleHeartBeat.errorCount"))
+                rtk_state = int(self._get_float(data, "normalBleHeartBeat.rtkState"))
+                rtk_label = {0:"no fix",1:"single",2:"DGPS",3:"RTK float",4:"RTK fixed"}.get(rtk_state, "?")
+
+                lines.append(f"*{label}*")
+                lines.append(f"  🤖 {state_label} — Battery: *{battery:.0f}%* — RTK: {rtk_label}")
+                if err_count > 0:
+                    lines.append(f"  ⚠️ {err_count} active error(s)")
+
+                # Today's run history (from mower_runs table)
+                today_runs, today_area, today_dur, today_batt = 0, 0.0, 0, 0.0
+                week_runs, week_area = 0, 0.0
+                lifetime_runs, lifetime_area = 0, 0.0
+                if self._db_path:
+                    try:
+                        import sqlite3
+                        from datetime import timedelta
+                        today = datetime.now().strftime("%Y-%m-%d")
+                        week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+                        with sqlite3.connect(self._db_path) as conn:
+                            row = conn.execute(
+                                "SELECT COUNT(*), COALESCE(SUM(area_m2),0), COALESCE(SUM(duration_sec),0), "
+                                "COALESCE(SUM(battery_used),0) FROM mower_runs "
+                                "WHERE device_sn=? AND start_time >= ? AND end_time IS NOT NULL",
+                                (sn, today),
+                            ).fetchone()
+                            if row:
+                                today_runs, today_area, today_dur, today_batt = row
+                            row = conn.execute(
+                                "SELECT COUNT(*), COALESCE(SUM(area_m2),0) FROM mower_runs "
+                                "WHERE device_sn=? AND start_time >= ? AND end_time IS NOT NULL",
+                                (sn, week_ago),
+                            ).fetchone()
+                            if row:
+                                week_runs, week_area = row
+                            row = conn.execute(
+                                "SELECT COUNT(*), COALESCE(SUM(area_m2),0) FROM mower_runs "
+                                "WHERE device_sn=? AND end_time IS NOT NULL",
+                                (sn,),
+                            ).fetchone()
+                            if row:
+                                lifetime_runs, lifetime_area = row
+                    except Exception:
+                        log.exception("Failed to read mower_runs for summary")
+
+                if today_runs:
+                    lines.append(f"  📅 Today: *{today_runs}* run(s) — {today_area:.0f} m² — {today_dur//60} min — {today_batt:.0f}% used")
+                else:
+                    lines.append(f"  📅 Today: no runs")
+                if week_runs:
+                    lines.append(f"  🗓 7d: {week_runs} run(s), {week_area:.0f} m²")
+                if lifetime_runs:
+                    lines.append(f"  ♾ Lifetime: {lifetime_runs} run(s), {lifetime_area:.0f} m²")
                 lines.append("")
 
         return "\n".join(lines)

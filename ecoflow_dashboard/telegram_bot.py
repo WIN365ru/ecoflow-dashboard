@@ -61,9 +61,34 @@ class TelegramBot:
             log.info("Telegram bot using proxy: %s", proxy.split("@")[-1] if "@" in proxy else proxy)
 
     def start(self) -> None:
+        self._register_commands()
         self._thread = threading.Thread(target=self._poll_loop, daemon=True, name="telegram-bot")
         self._thread.start()
         log.info("Telegram bot polling started")
+
+    def _register_commands(self) -> None:
+        """Publish the bot's command list so Telegram clients show a menu/autocomplete.
+        Without this call, /commands and the menu button stay empty even though
+        the bot handles the commands."""
+        cmds = [
+            {"command": "status",   "description": "Device status overview"},
+            {"command": "control",  "description": "Control devices"},
+            {"command": "circuits", "description": "Smart Panel circuit loads"},
+            {"command": "solar",    "description": "Solar production"},
+            {"command": "forecast", "description": "Solar forecast (today + tomorrow)"},
+            {"command": "cost",     "description": "Energy costs (today + month)"},
+            {"command": "blade",    "description": "Mower runs history"},
+            {"command": "help",     "description": "Show all commands"},
+        ]
+        try:
+            self._session.post(
+                f"{self._base}/setMyCommands",
+                json={"commands": cmds},
+                timeout=10,
+            )
+            log.info("Telegram bot commands registered (%d)", len(cmds))
+        except Exception as e:
+            log.warning("setMyCommands failed: %s", e)
 
     def stop(self) -> None:
         self._stop.set()
@@ -123,6 +148,8 @@ class TelegramBot:
             "/forecast": self._cmd_forecast,
             "/f": self._cmd_forecast,
             "/cost": self._cmd_cost,
+            "/blade": self._cmd_blade,
+            "/b": self._cmd_blade,
         }
         handler = handlers.get(cmd)
         if handler:
@@ -174,6 +201,7 @@ class TelegramBot:
             "/solar — Solar production\n"
             "/forecast — Solar forecast (tomorrow)\n"
             "/cost — Energy costs\n"
+            "/blade — Mower runs history\n"
             "/help — This message"
         )
 
@@ -494,6 +522,82 @@ class TelegramBot:
             f"📆 Today: *{grid_today_kwh:.1f} kWh* = *{self._currency}{cost_today:.2f}*"
             f"{monthly_str}"
         )
+
+    def _cmd_blade(self) -> None:
+        """Show mower runs history (today + 7d + lifetime + last 5 sessions)."""
+        blades = [(sn, dt) for sn, dt in self._device_types.items() if "blade" in dt]
+        if not blades:
+            self._send("No Blade mower configured.")
+            return
+
+        import sqlite3
+        from datetime import timedelta
+        out = []
+        for sn, _ in blades:
+            label = self._label(sn)
+            data = self._mqtt.get_device_data(sn)
+            BLADE_STATES = {
+                0x500: "Idle", 0x501: "Standby", 0x502: "Mowing",
+                0x503: "Returning", 0x504: "Charging", 0x505: "Mapping",
+                0x506: "Paused", 0x507: "Error", 0x801: "Charging",
+            }
+            battery = self._gf(data, "normalBleHeartBeat.batteryRemainPercent")
+            state_code = int(self._gf(data, "normalBleHeartBeat.robotState"))
+            state = BLADE_STATES.get(state_code, f"0x{state_code:X}")
+            out.append(f"🤖 *{label}*\n  Now: *{battery:.0f}%* {state}")
+
+            try:
+                today = datetime.now().strftime("%Y-%m-%d")
+                week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+                with sqlite3.connect(self._db_path) as conn:
+                    today_row = conn.execute(
+                        "SELECT COUNT(*), COALESCE(SUM(area_m2),0), COALESCE(SUM(duration_sec),0), "
+                        "COALESCE(SUM(battery_used),0) FROM mower_runs "
+                        "WHERE device_sn=? AND start_time >= ? AND end_time IS NOT NULL",
+                        (sn, today),
+                    ).fetchone()
+                    week_row = conn.execute(
+                        "SELECT COUNT(*), COALESCE(SUM(area_m2),0), COALESCE(SUM(duration_sec),0) "
+                        "FROM mower_runs WHERE device_sn=? AND start_time >= ? AND end_time IS NOT NULL",
+                        (sn, week_ago),
+                    ).fetchone()
+                    life_row = conn.execute(
+                        "SELECT COUNT(*), COALESCE(SUM(area_m2),0), COALESCE(SUM(duration_sec),0) "
+                        "FROM mower_runs WHERE device_sn=? AND end_time IS NOT NULL",
+                        (sn,),
+                    ).fetchone()
+                    last_runs = conn.execute(
+                        "SELECT start_time, duration_sec, area_m2, battery_used, end_state, error_count "
+                        "FROM mower_runs WHERE device_sn=? AND end_time IS NOT NULL "
+                        "ORDER BY start_time DESC LIMIT 5",
+                        (sn,),
+                    ).fetchall()
+
+                if today_row and today_row[0]:
+                    out.append(f"  📅 Today: *{today_row[0]}* run(s), {today_row[1]:.0f} m², "
+                               f"{today_row[2]//60} min, {today_row[3]:.0f}% used")
+                else:
+                    out.append("  📅 Today: no runs")
+                if week_row and week_row[0]:
+                    out.append(f"  🗓 7 days: {week_row[0]} run(s), {week_row[1]:.0f} m², {week_row[2]//60} min")
+                if life_row and life_row[0]:
+                    out.append(f"  ♾ Lifetime: {life_row[0]} run(s), {life_row[1]:.0f} m², {life_row[2]//3600}h")
+
+                if last_runs:
+                    out.append("\n*Recent runs:*")
+                    for st, dur, area, batt, end_st, errs in last_runs:
+                        # Compact "MM-DD HH:MM" timestamp
+                        try:
+                            t = datetime.fromisoformat(st).strftime("%m-%d %H:%M")
+                        except Exception:
+                            t = st
+                        end_emoji = {0x504: "🔌", 0x801: "🔌", 0x507: "⚠️"}.get(int(end_st or 0), "🏠")
+                        err_str = f" ⚠️{errs}" if errs else ""
+                        out.append(f"  {t}  {dur//60:>3}min  {area:>4.0f}m²  -{batt:.0f}% {end_emoji}{err_str}")
+            except Exception as e:
+                log.warning("blade history query failed: %s", e)
+
+        self._send("\n".join(out))
 
     def _cmd_forecast(self) -> None:
         if not self._solar_forecast:
