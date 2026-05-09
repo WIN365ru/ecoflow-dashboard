@@ -36,12 +36,18 @@ BLADE_STATES = {
     0x801: ("Charging", "blue"),
 }
 
-# Blade error code translations (extend as discovered).
-# Codes seen in the wild (raw decimal robotLowerr → app's display code in parens):
-#   1292 → app 0700  : low battery, charge to 90% before working
-#   1795 → app 0503  : out of bounds
+# Blade error code translations.
+# Source: normalBleHeartBeat.errorCode.0..N (array). The iOS app displays
+# each code as a 4-digit hex string padded to 4 chars (e.g. 0x700 → "0700").
+# IMPORTANT: normalBleHeartBeat.robotLowerr just MIRRORS robotState — it is
+# NOT an error code. Earlier translations using robotLowerr were wrong.
 BLADE_ERRORS = {
+    # Confirmed against iOS app:
+    0x700: "Low battery — charge to 90% before working",  # 1792, app 0700
+    0x503: "Out of bounds",                                # 1283, app 0503
+    # Recently-cleared codes (errorCodeDelete.N) — phrasing reflects that.
     2062: "RTK signal lost (cleared)",
+    # Older guesses pre-discovery — verify each as it reappears in real use.
     2001: "Motor overload",
     2002: "Bumper triggered",
     2003: "Lifted from ground",
@@ -50,8 +56,6 @@ BLADE_ERRORS = {
     2006: "Rain detected",
     2007: "GPS lost",
     2008: "Out of mowing zone",
-    1292: "Low battery — needs to charge to 90%",  # app code 0700
-    1795: "Out of bounds",                          # app code 0503
 }
 
 
@@ -908,9 +912,14 @@ def _build_blade_panel(sn: str, data: dict, name: str) -> Panel:
     map_dist = _f("normalBleHeartBeat.mappingDistance")
     rain_countdown = _f("normalBleHeartBeat.rainCountdown")
 
-    # Errors
+    # Errors — real codes live in errorCode.0..N. robotLowerr mirrors
+    # robotState (same number), so it's not an error.
     error_count = int(_f("normalBleHeartBeat.errorCount"))
-    err_low = int(_f("normalBleHeartBeat.robotLowerr"))
+    err_codes: list[int] = []
+    for i in range(8):
+        c = int(_f(f"normalBleHeartBeat.errorCode.{i}"))
+        if c:
+            err_codes.append(c)
 
     # Connection status (based on signals)
     if wifi:
@@ -952,13 +961,28 @@ def _build_blade_panel(sn: str, data: dict, name: str) -> Panel:
         Text("Position", style="dim"), Text(f"({int(pose_x)}, {int(pose_y)}) {int(pose_angle)}°"),
     )
 
-    # GPS line (if available)
+    # GPS line (if available). The Blade sometimes reports placeholder
+    # base coords (e.g. ~3.04, ~3.05) when the base hasn't published a
+    # real fix — only show base if it's near the robot.
     gps_line = None
     if robot_lat and robot_lng:
-        # Mask precision for privacy in display
+        base_str = ""
+        if base_lat and base_lng and abs(base_lat) <= 90 and abs(base_lng) <= 180:
+            # If base is implausibly far from the robot (>1 km), assume placeholder.
+            try:
+                import math
+                R = 6371000.0
+                p1, p2 = math.radians(robot_lat), math.radians(base_lat)
+                dp = math.radians(base_lat - robot_lat)
+                dl = math.radians(base_lng - robot_lng)
+                a = math.sin(dp/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
+                dist_m = 2 * R * math.atan2(math.sqrt(a), math.sqrt(1-a))
+            except Exception:
+                dist_m = 0
+            if dist_m < 1000:
+                base_str = f"  Base: [dim]{base_lat:.5f}°, {base_lng:.5f}°[/]"
         gps_line = Text.from_markup(
-            f"  📍 GPS: [cyan]{robot_lat:.5f}°, {robot_lng:.5f}°[/]  "
-            f"Base: [dim]{base_lat:.5f}°, {base_lng:.5f}°[/]"
+            f"  📍 GPS: [cyan]{robot_lat:.5f}°, {robot_lng:.5f}°[/]{base_str}"
         )
 
     # Mowing job grid (only show if there's an active job or stats)
@@ -987,11 +1011,16 @@ def _build_blade_panel(sn: str, data: dict, name: str) -> Panel:
     flags = []
     if rain_countdown > 0:
         flags.append(Text.from_markup(f"  🌧️ [yellow]Rain delay: {int(rain_countdown)}s[/]"))
-    if error_count > 0:
+    if err_codes:
+        parts = []
+        for c in err_codes:
+            msg = BLADE_ERRORS.get(c, "unknown")
+            parts.append(f"{c:04X} ({msg})")
+        flags.append(Text.from_markup(
+            f"  ⚠️ [red bold]{error_count} active error(s):[/] {', '.join(parts)}"
+        ))
+    elif error_count > 0:
         flags.append(Text.from_markup(f"  ⚠️ [red bold]{error_count} active error(s)[/]"))
-    elif err_low and err_low not in (1281,):  # 1281 is also robotState, often duplicated
-        err_msg = BLADE_ERRORS.get(err_low, f"code {err_low}")
-        flags.append(Text.from_markup(f"  ⚠️ [yellow]{err_msg}[/]"))
 
     # Assemble
     elements: list = [state_line, batt_bar, ""]

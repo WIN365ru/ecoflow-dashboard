@@ -79,6 +79,7 @@ class TelegramBot:
             {"command": "cost",     "description": "Energy costs (today + month)"},
             {"command": "blade",    "description": "Mower runs history"},
             {"command": "blade_debug", "description": "Dump all Blade telemetry keys"},
+            {"command": "blade_obs", "description": "Show recent iOS-app commands captured"},
             {"command": "help",     "description": "Show all commands"},
         ]
         try:
@@ -152,10 +153,17 @@ class TelegramBot:
             "/blade": self._cmd_blade,
             "/b": self._cmd_blade,
             "/blade_debug": self._cmd_blade_debug,
+            "/blade_raw": self._cmd_blade_raw,
+            "/blade_obs": self._cmd_blade_observed,
         }
         handler = handlers.get(cmd)
         if handler:
-            handler()
+            # Commands that need the full message body get it; the rest run
+            # with no args. Keeps the existing zero-arg handlers untouched.
+            if cmd in ("/blade_raw",):
+                handler(text)
+            else:
+                handler()
         else:
             self._send("Unknown command. Try /help")
 
@@ -260,6 +268,12 @@ class TelegramBot:
                 state_code = int(self._gf(data, "normalBleHeartBeat.robotState"))
                 state = BLADE_STATES.get(state_code, f"0x{state_code:X}")
                 err_count = int(self._gf(data, "normalBleHeartBeat.errorCount"))
+                # Read the real errorCode array (robotLowerr just mirrors robotState).
+                err_codes_status = []
+                for i in range(8):
+                    c = int(self._gf(data, f"normalBleHeartBeat.errorCode.{i}"))
+                    if c:
+                        err_codes_status.append(c)
                 rain_cd = int(self._gf(data, "normalBleHeartBeat.rainCountdown"))
                 rtk_state = int(self._gf(data, "normalBleHeartBeat.rtkState"))
                 rtk_label = {0:"no fix",1:"single",2:"DGPS",3:"RTK float",4:"RTK fixed"}.get(rtk_state, "?")
@@ -270,7 +284,9 @@ class TelegramBot:
                     extras.append(f"Job: {work_area:.1f}m² ({work_prog}%)")
                 if rain_cd > 0:
                     extras.append(f"🌧️ {rain_cd}s")
-                if err_count > 0:
+                if err_codes_status:
+                    extras.append("⚠️ " + ", ".join(f"{c:04X}" for c in err_codes_status))
+                elif err_count > 0:
                     extras.append(f"⚠️ {err_count} err")
                 extras_str = ("\n    " + "  ".join(extras)) if extras else ""
                 lines.append(
@@ -625,12 +641,21 @@ class TelegramBot:
             if not data:
                 self._send(f"`{sn}`: no data yet")
                 continue
-            keys = sorted(data.keys())
+            keys = sorted(k for k in data.keys() if not k.startswith("_"))
+
+            def _redact(key: str, val):
+                """Mask sensitive identifiers when echoing telemetry."""
+                up = key.upper()
+                if any(s in up for s in ("ICCID", "IMEI", "IMSI")):
+                    s = str(val)
+                    return s[:4] + "…" + s[-4:] if len(s) > 8 else "***"
+                return val
+
             # Send in chunks to fit Telegram's 4 KB message cap.
             chunk: list[str] = []
             chunks_sent = 0
             for k in keys:
-                v = data[k]
+                v = _redact(k, data[k])
                 line = f"`{k}` = `{v}`"
                 if sum(len(x) for x in chunk) + len(line) > 3500:
                     self._send(f"*Blade `{sn}` ({len(keys)} keys, part {chunks_sent+1})*\n" + "\n".join(chunk))
@@ -639,6 +664,71 @@ class TelegramBot:
                 chunk.append(line)
             if chunk:
                 self._send(f"*Blade `{sn}` ({len(keys)} keys, part {chunks_sent+1})*\n" + "\n".join(chunk))
+
+    def _cmd_blade_observed(self) -> None:
+        """Show the most recent commands the broker echoed for the Blade.
+        Useful for reverse-engineering: open the iOS app, press a button,
+        then run /blade_obs in Telegram to capture the command JSON."""
+        blades = [(sn, dt) for sn, dt in self._device_types.items() if "blade" in dt]
+        if not blades:
+            self._send("No Blade configured.")
+            return
+        for sn, _ in blades:
+            data = self._mqtt.get_device_data(sn)
+            hist = data.get("_observed_commands") or []
+            if not hist:
+                self._send(f"`{sn}`: no commands observed yet.\n"
+                           "Tip: open the EcoFlow iOS app, press a Blade button,\n"
+                           "then run /blade\\_obs again.")
+                continue
+            lines = [f"*Blade `{sn}` — last {len(hist)} commands*"]
+            for entry in hist[-10:]:
+                age = int(time.time() - entry["ts"])
+                topic_kind = entry.get("topic", "?")
+                payload = entry.get("payload", {})
+                # Compact payload preview — params first, then top-level keys.
+                params = payload.get("params") if isinstance(payload, dict) else None
+                summary = json.dumps(params or payload, ensure_ascii=False)[:200]
+                lines.append(f"`-{age}s` [{topic_kind}] `{summary}`")
+            self._send("\n".join(lines))
+
+    def _cmd_blade_raw(self, text: str) -> None:
+        """Send arbitrary MQTT params to the Blade. Gated by env BLADE_RAW=1.
+        Usage: /blade_raw {"cmdSet":11,"id":1,"params":{"action":1}}
+        Or:    /blade_raw H101...:{"...":...}  to target a specific SN."""
+        if os.environ.get("BLADE_RAW", "0") not in ("1", "true", "yes"):
+            self._send("`/blade_raw` is disabled. Set `BLADE_RAW=1` in env to enable. "
+                       "⚠️ Sends raw MQTT commands — only use captured JSON.")
+            return
+        # Strip the command name; the rest is the payload (optionally `SN:json`).
+        body = text.split(None, 1)[1] if " " in text else ""
+        if not body:
+            self._send("Usage: `/blade_raw {\"cmdSet\":11,\"id\":1,\"params\":{...}}`\n"
+                       "Or with SN: `/blade_raw H101ZEB...0753:{...}`")
+            return
+        sn, _, json_text = body.partition(":")
+        if json_text and sn.upper().startswith("H101"):
+            sn = sn.strip()
+        else:
+            json_text = body
+            blades = [s for s, dt in self._device_types.items() if "blade" in dt]
+            if not blades:
+                self._send("No Blade configured.")
+                return
+            sn = blades[0]
+        try:
+            params = json.loads(json_text)
+        except json.JSONDecodeError as e:
+            self._send(f"❌ Invalid JSON: {e}")
+            return
+        if not isinstance(params, dict):
+            self._send("❌ Payload must be a JSON object.")
+            return
+        try:
+            self._mqtt.send_command(sn, params)
+            self._send(f"✅ Sent to `{sn}`:\n`{json.dumps(params)[:300]}`")
+        except Exception as e:
+            self._send(f"❌ Send failed: {e}")
 
     def _cmd_forecast(self) -> None:
         if not self._solar_forecast:

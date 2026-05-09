@@ -233,6 +233,30 @@ class EcoFlowMqttClient:
             log.debug("Ignoring message on unknown topic: %s", msg.topic)
             return
 
+        # Distinguish state-push vs command/inquire topics. Commands sent by
+        # other clients (iOS app, etc.) on this account flow through /set —
+        # log them as raw JSON so we can reverse-engineer the command set
+        # without merging them into device state.
+        if "/thing/property/set" in msg.topic or "/thing/property/get" in msg.topic:
+            try:
+                preview = json.dumps(payload, ensure_ascii=False)[:600]
+            except Exception:
+                preview = repr(payload)[:600]
+            log.info("MQTT CMD [%s] topic=%s payload=%s", sn, msg.topic, preview)
+            # Track it on the device record so /blade_debug can echo recently
+            # observed commands back to the user.
+            with self._lock:
+                hist = self._data[sn].setdefault("_observed_commands", [])
+                hist.append({
+                    "ts": _time.time(),
+                    "topic": msg.topic.rsplit("/", 1)[-1],  # set | get
+                    "payload": payload,
+                })
+                # Keep only the last 20 to bound memory.
+                if len(hist) > 20:
+                    del hist[:-20]
+            return
+
         # The payload may be wrapped in "params" or be at top level
         data = payload.get("params", payload)
         flat = _flatten(data)

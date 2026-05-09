@@ -1022,11 +1022,16 @@ const BLADE_STATES = {
   0x507: ['Error', '#ef4444'],
   0x801: ['Charging', '#3b82f6'],
 };
+// Real errors come from normalBleHeartBeat.errorCode.0..N. App shows each
+// as 4-digit hex (e.g. 0x700 → "0700"). robotLowerr mirrors robotState and
+// is NOT an error code.
 const BLADE_ERRORS = {
-  2062: 'RTK signal lost (cleared)', 2001: 'Motor overload', 2002: 'Bumper triggered',
+  0x700: 'Low battery — charge to 90% before working',
+  0x503: 'Out of bounds',
+  2062: 'RTK signal lost (cleared)',
+  2001: 'Motor overload', 2002: 'Bumper triggered',
   2003: 'Lifted from ground', 2004: 'Stuck', 2005: 'Battery overheat',
   2006: 'Rain detected', 2007: 'GPS lost', 2008: 'Out of mowing zone',
-  1292: 'Low battery — needs to charge to 90%', 1795: 'Out of bounds',
 };
 const RTK_STATES = {0:'no fix',1:'single',2:'DGPS',3:'RTK float',4:'RTK fixed'};
 
@@ -1057,8 +1062,19 @@ function buildBlade(sn, name, d) {
 
   const robotLat = g(d, 'signalInfo.robotLat');
   const robotLng = g(d, 'signalInfo.robotLng');
-  const baseLat = g(d, 'signalInfo.baseLat');
-  const baseLng = g(d, 'signalInfo.baseLng');
+  let baseLat = g(d, 'signalInfo.baseLat');
+  let baseLng = g(d, 'signalInfo.baseLng');
+  // Discard bogus base coords (e.g. ~3.04, 3.05) when the base hasn't
+  // published a real fix. We only trust them if within ~1 km of the robot.
+  if (robotLat && robotLng && baseLat && baseLng) {
+    const R = 6371000;
+    const toRad = x => x * Math.PI / 180;
+    const dp = toRad(baseLat - robotLat);
+    const dl = toRad(baseLng - robotLng);
+    const a = Math.sin(dp/2)**2 + Math.cos(toRad(robotLat))*Math.cos(toRad(baseLat))*Math.sin(dl/2)**2;
+    const distM = 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    if (distM > 1000) { baseLat = 0; baseLng = 0; }
+  }
   const hasGps = robotLat && robotLng;
 
   const workArea = g(d, 'normalBleHeartBeat.currentWorkArea');
@@ -1070,15 +1086,27 @@ function buildBlade(sn, name, d) {
   const mapDist = g(d, 'normalBleHeartBeat.mappingDistance');
   const rainCd = g(d, 'normalBleHeartBeat.rainCountdown') | 0;
   const errCount = g(d, 'normalBleHeartBeat.errorCount') | 0;
-  const errLow = g(d, 'normalBleHeartBeat.robotLowerr') | 0;
+  // Real errors come from errorCode.0..N. robotLowerr just mirrors robotState.
+  const errCodes = [];
+  for (let i = 0; i < 8; i++) {
+    const c = g(d, 'normalBleHeartBeat.errorCode.' + i) | 0;
+    if (c) errCodes.push(c);
+  }
 
   const showJob = workArea > 0 || workTime > 0 || edgeTotal > 0 || mapArea > 0;
   const rtkColor = rtkState === 4 ? '#10b981' : rtkState >= 2 ? '#eab308' : '#ef4444';
 
   let flags = '';
   if (rainCd > 0) flags += `<div style="color:#eab308">🌧️ Rain delay: ${rainCd}s</div>`;
-  if (errCount > 0) flags += `<div style="color:#ef4444"><b>⚠️ ${errCount} active error(s)</b></div>`;
-  else if (errLow && errLow !== 1281 && BLADE_ERRORS[errLow]) flags += `<div style="color:#eab308">⚠️ ${BLADE_ERRORS[errLow]}</div>`;
+  if (errCodes.length) {
+    const parts = errCodes.map(c => {
+      const hex = c.toString(16).toUpperCase().padStart(4, '0');
+      return `${hex} (${BLADE_ERRORS[c] || 'unknown'})`;
+    }).join(', ');
+    flags += `<div style="color:#ef4444"><b>⚠️ ${errCount} active:</b> ${parts}</div>`;
+  } else if (errCount > 0) {
+    flags += `<div style="color:#ef4444"><b>⚠️ ${errCount} active error(s)</b></div>`;
+  }
 
   const mapId = `bladeMap_${sn.replace(/[^a-zA-Z0-9]/g,'')}`;
 

@@ -472,13 +472,15 @@ class AlertManager:
             0x503: "Returning", 0x504: "Charging", 0x505: "Mapping",
             0x506: "Paused", 0x507: "Error", 0x801: "Charging",
         }
+        # Active errors live in errorCode.0..N — robotLowerr mirrors robotState.
         BLADE_ERRORS = {
+            0x700: "Low battery — charge to 90% before working",  # 1792, app 0700
+            0x503: "Out of bounds",                                # 1283, app 0503
             2001: "Motor overload", 2002: "Bumper triggered",
             2003: "Lifted from ground", 2004: "Stuck",
             2005: "Battery overheat", 2006: "Rain detected",
             2007: "GPS lost", 2008: "Out of mowing zone",
-            1292: "Low battery — needs to charge to 90%",  # app 0700
-            1795: "Out of bounds",                          # app 0503
+            2062: "RTK signal lost (cleared)",
         }
 
         # ── State change ──
@@ -514,17 +516,27 @@ class AlertManager:
                 break
 
         # ── Errors ──
+        # Read the real error array. errorCode.0..N holds active codes; the
+        # app shows each as 4-digit hex (0x700 → "0700"). robotLowerr just
+        # mirrors robotState — never use it for errors.
         err_count = int(self._get_float(data, "normalBleHeartBeat.errorCount"))
         err_count_prev = int(self._get_float(prev, "normalBleHeartBeat.errorCount"))
         if err_count > err_count_prev and prev:
-            err_low = int(self._get_float(data, "normalBleHeartBeat.robotLowerr"))
-            known = err_low in BLADE_ERRORS
-            err_msg = BLADE_ERRORS.get(err_low, f"unknown code {err_low} (0x{err_low:X})")
-            if not known:
-                # Persist unknown error codes so we can crowdsource translations.
-                log.warning("Blade unknown error code on %s: %d (0x%X)", sn, err_low, err_low)
-            if self._can_alert(f"blade_err:{sn}:{err_low}"):
-                self._send(f"⚠️ *BLADE ERROR*\n{label}\n{err_msg}\nActive errors: {err_count}")
+            active = []
+            for i in range(8):
+                c = int(self._get_float(data, f"normalBleHeartBeat.errorCode.{i}"))
+                if c:
+                    active.append(c)
+            lines = []
+            for c in active:
+                msg = BLADE_ERRORS.get(c, "unknown code")
+                lines.append(f"  • `{c:04X}` — {msg}")
+                if c not in BLADE_ERRORS:
+                    log.warning("Blade unknown error code on %s: %d (0x%X)", sn, c, c)
+            key = active[0] if active else err_count
+            if active and self._can_alert(f"blade_err:{sn}:{key}"):
+                self._send(f"⚠️ *BLADE ERROR*\n{label}\n" + "\n".join(lines) +
+                           f"\nActive errors: {err_count}")
 
         # ── Rain delay started ──
         rain_now = self._get_float(data, "normalBleHeartBeat.rainCountdown")
