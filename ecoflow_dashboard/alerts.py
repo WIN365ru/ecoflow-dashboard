@@ -26,6 +26,12 @@ DEFAULTS = {
     "ALERT_COOLDOWN": "1800",        # 30 min between repeated alerts
     "ALERT_DAILY_SUMMARY": "20",     # Hour (0-23) to send daily summary, empty to disable
     "ALERT_MONTHLY_REPORT": "1",     # Send monthly energy/cost report on 1st of month
+    "ALERT_WEEKLY_DIGEST": "1",      # Anomaly digest on Monday morning
+    # Blade thresholds
+    "ALERT_BLADE_GEOFENCE_M": "100", # Robot-from-base distance (m) before alerting
+    "ALERT_BLADE_STUCK_MIN": "10",   # Mins without progress while mowing → alert
+    "ALERT_BLADE_EDGE_CUT_DAYS": "21",  # Days since last edge cut before reminder
+    "ALERT_BLADE_RAIN_PROB": "60",   # % precipitation probability that triggers warning
 }
 
 
@@ -35,6 +41,17 @@ def _env_int(key: str) -> int:
 
 def _env_bool(key: str) -> bool:
     return os.environ.get(key, DEFAULTS.get(key, "0")) not in ("0", "false", "no", "")
+
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in meters between two lat/lng points."""
+    import math
+    R = 6371000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
 class AlertManager:
@@ -101,6 +118,23 @@ class AlertManager:
 
         # Active mower run tracking: {sn: {start_ts, battery_start}}
         self._mower_run_active: dict[str, dict] = {}
+        # Stuck detection: {sn: {progress, since_ts}}
+        self._mower_progress_seen: dict[str, dict] = {}
+        # Geofence cool-down: {sn: timestamp_last_alert}
+        self._mower_geofence_alerted: dict[str, float] = {}
+        # Last weekly digest date (sent at most once/week)
+        self._last_weekly_date: str = ""
+        # Last rain warning timestamp
+        self._mower_rain_alerted: dict[str, float] = {}
+        # Optional solar_forecast handle — set externally so we can read precipitation
+        self._solar_forecast = None
+
+        # Blade thresholds
+        self._blade_geofence_m = _env_int("ALERT_BLADE_GEOFENCE_M")
+        self._blade_stuck_min = _env_int("ALERT_BLADE_STUCK_MIN")
+        self._blade_edge_cut_days = _env_int("ALERT_BLADE_EDGE_CUT_DAYS")
+        self._blade_rain_prob = _env_int("ALERT_BLADE_RAIN_PROB")
+        self._weekly_enabled = _env_bool("ALERT_WEEKLY_DIGEST")
 
         # Arbitrage: track current tariff period to alert on transitions
         self._current_tariff: str = ""  # "day" or "night"
@@ -443,6 +477,8 @@ class AlertManager:
             2003: "Lifted from ground", 2004: "Stuck",
             2005: "Battery overheat", 2006: "Rain detected",
             2007: "GPS lost", 2008: "Out of mowing zone",
+            1292: "Low battery — needs to charge to 90%",  # app 0700
+            1795: "Out of bounds",                          # app 0503
         }
 
         # ── State change ──
@@ -482,7 +518,11 @@ class AlertManager:
         err_count_prev = int(self._get_float(prev, "normalBleHeartBeat.errorCount"))
         if err_count > err_count_prev and prev:
             err_low = int(self._get_float(data, "normalBleHeartBeat.robotLowerr"))
-            err_msg = BLADE_ERRORS.get(err_low, f"code {err_low}")
+            known = err_low in BLADE_ERRORS
+            err_msg = BLADE_ERRORS.get(err_low, f"unknown code {err_low} (0x{err_low:X})")
+            if not known:
+                # Persist unknown error codes so we can crowdsource translations.
+                log.warning("Blade unknown error code on %s: %d (0x%X)", sn, err_low, err_low)
             if self._can_alert(f"blade_err:{sn}:{err_low}"):
                 self._send(f"⚠️ *BLADE ERROR*\n{label}\n{err_msg}\nActive errors: {err_count}")
 
@@ -499,6 +539,85 @@ class AlertManager:
         if rtk_prev == 4 and rtk_now < 2 and prev:
             if self._can_alert(f"blade_rtk:{sn}"):
                 self._send(f"🛰️ *BLADE RTK LOST*\n{label}\nGPS quality degraded — mowing may pause")
+
+        # ── Stuck detection — no work-progress while in 0x502 Mowing ──
+        if state_now == 0x502 and self._blade_stuck_min > 0:
+            progress = int(self._get_float(data, "normalBleHeartBeat.currentWorkProgress"))
+            seen = self._mower_progress_seen.get(sn)
+            now_t = time.time()
+            if seen is None or seen.get("progress") != progress:
+                self._mower_progress_seen[sn] = {"progress": progress, "since_ts": now_t}
+            else:
+                idle_min = (now_t - seen["since_ts"]) / 60
+                if idle_min >= self._blade_stuck_min and self._can_alert(f"blade_stuck:{sn}:{progress}"):
+                    self._send(
+                        f"🪦 *BLADE STUCK?*\n{label}\n"
+                        f"Mowing for {int(idle_min)} min with no progress (still {progress}%). "
+                        f"May be wedged or off-track."
+                    )
+        else:
+            # Clear the timer when not mowing
+            self._mower_progress_seen.pop(sn, None)
+
+        # ── Geofence — alert if robot is far from base ──
+        if self._blade_geofence_m > 0:
+            r_lat = self._get_float(data, "signalInfo.robotLat")
+            r_lng = self._get_float(data, "signalInfo.robotLng")
+            b_lat = self._get_float(data, "signalInfo.baseLat")
+            b_lng = self._get_float(data, "signalInfo.baseLng")
+            if r_lat and r_lng and b_lat and b_lng:
+                dist_m = _haversine_m(r_lat, r_lng, b_lat, b_lng)
+                if dist_m > self._blade_geofence_m:
+                    last = self._mower_geofence_alerted.get(sn, 0)
+                    if time.time() - last > self._cooldown_secs:
+                        self._mower_geofence_alerted[sn] = time.time()
+                        self._send(
+                            f"🛰️ *BLADE OUT OF RANGE*\n{label}\n"
+                            f"{int(dist_m)} m from dock (limit {self._blade_geofence_m} m)"
+                        )
+
+        # ── Rain forecast — warn if mowing and rain probable in next few hours ──
+        if state_now == 0x502 and self._solar_forecast and self._blade_rain_prob > 0:
+            try:
+                prob = self._solar_forecast.upcoming_rain_probability()
+            except Exception:
+                prob = 0
+            if prob >= self._blade_rain_prob and self._can_alert(f"blade_rain_forecast:{sn}"):
+                self._send(
+                    f"🌧️ *BLADE — RAIN INCOMING*\n{label}\n"
+                    f"{prob}% precipitation probability in the next 3h while mowing"
+                )
+
+    def _check_blade_edge_cut(self) -> None:
+        """Once-a-day check: alert if edge cut hasn't been performed in N days.
+        Called from _check_daily_summary so it runs at most once per day."""
+        if self._blade_edge_cut_days <= 0 or not self._db_path:
+            return
+        import sqlite3
+        from datetime import timedelta
+        cutoff = (datetime.now() - timedelta(days=self._blade_edge_cut_days)).isoformat(timespec="seconds")
+        for sn, dtype in self._device_types.items():
+            if "blade" not in dtype:
+                continue
+            try:
+                with sqlite3.connect(self._db_path) as conn:
+                    # Did edgeCurrent change in the last N days? Compare max-min.
+                    row = conn.execute(
+                        "SELECT MIN(value), MAX(value) FROM snapshots "
+                        "WHERE device_sn=? AND key='normalBleHeartBeat.edgeCurrent' "
+                        "AND timestamp >= ?",
+                        (sn, cutoff),
+                    ).fetchone()
+                    if row and row[0] is not None and row[0] == row[1]:
+                        if self._can_alert(f"blade_edge_cut:{sn}"):
+                            label = self._device_label(sn)
+                            self._send(
+                                f"✂️ *BLADE — EDGE CUT REMINDER*\n{label}\n"
+                                f"No edge-cutting in the last {self._blade_edge_cut_days} days. "
+                                f"Consider running a perimeter pass."
+                            )
+            except Exception:
+                log.exception("Edge cut check failed for %s", sn)
 
     def _record_mower_run_end(self, sn: str, data: dict, end_state: int) -> None:
         """Persist a completed mowing run (0x502 → other state) to mower_runs."""
@@ -543,6 +662,16 @@ class AlertManager:
 
         self._last_summary_date = today
         self._send(self._build_summary())
+        # Piggy-back the once-a-day edge-cut reminder
+        try:
+            self._check_blade_edge_cut()
+        except Exception:
+            log.exception("edge-cut reminder failed")
+        # Weekly anomaly digest on Mondays
+        try:
+            self._check_weekly_digest()
+        except Exception:
+            log.exception("weekly digest failed")
 
     def _check_monthly_report(self) -> None:
         """Send monthly energy/cost report on the 1st of each month."""
@@ -560,6 +689,112 @@ class AlertManager:
 
         self._last_monthly_date = month_key
         self._send(self._build_monthly_report())
+
+    def _check_weekly_digest(self) -> None:
+        """Send anomaly digest once a week (Mondays at the daily summary hour)."""
+        if not self._weekly_enabled or not self._db_path:
+            return
+        now = datetime.now()
+        if now.weekday() != 0:  # 0=Monday
+            return
+        wk = now.strftime("%G-W%V")
+        if wk == self._last_weekly_date:
+            return
+        digest = self._build_weekly_digest()
+        if digest:
+            self._last_weekly_date = wk
+            self._send(digest)
+
+    def _build_weekly_digest(self) -> str:
+        """Detect anomalies over the last 7 days and produce a digest."""
+        import sqlite3
+        from datetime import timedelta
+        now = datetime.now()
+        week_ago = (now - timedelta(days=7)).isoformat(timespec="seconds")
+        prev_start = (now - timedelta(days=14)).isoformat(timespec="seconds")
+        lines = [f"📰 *Weekly Digest* — {now.strftime('%Y-%m-%d')}\n"]
+
+        try:
+            with sqlite3.connect(self._db_path) as conn:
+                # Outages last week
+                row = conn.execute(
+                    "SELECT COUNT(*), COALESCE(SUM(duration_sec),0) FROM outages "
+                    "WHERE start_time >= ?", (week_ago,)).fetchone()
+                if row and row[0]:
+                    n, secs = row
+                    lines.append(f"⚡ *Grid outages*: {n} event(s), total {secs//60} min")
+
+                # Mower runs last week vs previous week
+                for sn, dtype in self._device_types.items():
+                    if "blade" not in dtype:
+                        continue
+                    label = self._device_label(sn)
+                    cur = conn.execute(
+                        "SELECT COUNT(*), COALESCE(SUM(area_m2),0), COALESCE(SUM(duration_sec),0), "
+                        "COALESCE(SUM(error_count),0) FROM mower_runs "
+                        "WHERE device_sn=? AND start_time >= ? AND end_time IS NOT NULL",
+                        (sn, week_ago)).fetchone()
+                    pcur = conn.execute(
+                        "SELECT COUNT(*), COALESCE(SUM(area_m2),0) FROM mower_runs "
+                        "WHERE device_sn=? AND start_time >= ? AND start_time < ? "
+                        "AND end_time IS NOT NULL", (sn, prev_start, week_ago)).fetchone()
+                    if cur and cur[0]:
+                        n, area, dur, errs = cur
+                        prev_n, prev_area = (pcur or (0, 0))
+                        delta = ""
+                        if prev_n:
+                            pct = ((area - prev_area) / prev_area) * 100
+                            arrow = "📈" if pct > 0 else "📉"
+                            delta = f"  ({arrow} {pct:+.0f}% vs prior week)"
+                        lines.append(f"\n🤖 *{label}*")
+                        lines.append(f"  {n} run(s), {area:.0f} m², {dur//60} min{delta}")
+                        if n:
+                            lines.append(f"  Avg: {area/n:.1f} m²/run, {dur//n//60} min/run")
+                        # Battery efficiency: m² per % battery
+                        eff_row = conn.execute(
+                            "SELECT SUM(area_m2)/NULLIF(SUM(battery_used),0) "
+                            "FROM mower_runs WHERE device_sn=? AND start_time >= ? "
+                            "AND end_time IS NOT NULL AND battery_used > 0",
+                            (sn, week_ago)).fetchone()
+                        if eff_row and eff_row[0]:
+                            lines.append(f"  Efficiency: {eff_row[0]:.1f} m² per % battery")
+                        if errs:
+                            lines.append(f"  ⚠️ {errs} error event(s)")
+
+                    # Edge-cut reminder snapshot (info, not alert)
+                    edge_row = conn.execute(
+                        "SELECT MAX(timestamp) FROM snapshots WHERE device_sn=? "
+                        "AND key='normalBleHeartBeat.edgeCurrent' AND value > 0",
+                        (sn,)).fetchone()
+                    if edge_row and edge_row[0]:
+                        try:
+                            last = datetime.fromisoformat(edge_row[0])
+                            days = (now - last).days
+                            if days > self._blade_edge_cut_days:
+                                lines.append(f"  ✂️ Edge cut: last {days}d ago — overdue")
+                        except Exception:
+                            pass
+
+                # Delta Pro battery cycle deltas
+                for sn, dtype in self._device_types.items():
+                    if "delta" not in dtype:
+                        continue
+                    cur = conn.execute(
+                        "SELECT MIN(value), MAX(value) FROM snapshots "
+                        "WHERE device_sn=? AND key='bmsMaster.cycles' AND timestamp >= ?",
+                        (sn, week_ago)).fetchone()
+                    if cur and cur[0] is not None:
+                        delta = (cur[1] or 0) - (cur[0] or 0)
+                        if delta >= 7:  # more than ~1/day is unusual
+                            label = self._device_label(sn)
+                            lines.append(f"\n🔋 *{label}*: +{delta} battery cycles this week (heavy use)")
+        except Exception:
+            log.exception("weekly digest query failed")
+            return ""
+
+        if len(lines) == 1:
+            return ""  # Nothing notable
+        return "\n".join(lines)
 
     def _build_monthly_report(self) -> str:
         """Build monthly energy consumption and cost report from SQLite."""

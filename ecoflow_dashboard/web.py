@@ -118,10 +118,15 @@ def api_devices() -> Response:
                 clean[k] = v
             else:
                 clean[k] = str(v)
+        age = _mqtt.last_update_age(sn)
+        # JSON can't serialize float('inf') — clamp to a sentinel.
+        if age == float("inf"):
+            age = -1
         result[sn] = {
             "type": dtype,
             "name": _device_names.get(sn, sn),
             "data": clean,
+            "data_age_sec": int(age),
         }
     return Response(
         json.dumps({"connected": _mqtt.connected, "version": __version__,
@@ -1021,6 +1026,7 @@ const BLADE_ERRORS = {
   2062: 'RTK signal lost (cleared)', 2001: 'Motor overload', 2002: 'Bumper triggered',
   2003: 'Lifted from ground', 2004: 'Stuck', 2005: 'Battery overheat',
   2006: 'Rain detected', 2007: 'GPS lost', 2008: 'Out of mowing zone',
+  1292: 'Low battery — needs to charge to 90%', 1795: 'Out of bounds',
 };
 const RTK_STATES = {0:'no fix',1:'single',2:'DGPS',3:'RTK float',4:'RTK fixed'};
 
@@ -1202,16 +1208,33 @@ async function refresh() {
       else if (info.type.includes('blade')) blades.push([sn, info]);
     }
 
+    // Stale-data badge — color-coded last-update age, overlaid on each card.
+    function staleBadge(ageSec) {
+      if (ageSec === undefined || ageSec === null || ageSec < 0)
+        return '<span style="color:#888;font-size:11px">no data</span>';
+      let txt, c;
+      if (ageSec < 30) { txt = 'live'; c = '#10b981'; }
+      else if (ageSec < 120) { txt = ageSec + 's'; c = '#10b981'; }
+      else if (ageSec < 600) { txt = Math.floor(ageSec/60) + 'm'; c = '#eab308'; }
+      else { txt = 'stale ' + Math.floor(ageSec/60) + 'm'; c = '#ef4444'; }
+      return '<span title="Last MQTT update" style="color:' + c +
+             ';font-size:11px;font-weight:600;background:#0d1117cc;padding:2px 6px;border-radius:4px">🕒 ' + txt + '</span>';
+    }
+    function wrapCard(inner, ageSec) {
+      return '<div style="position:relative">' + inner +
+             '<div style="position:absolute;top:10px;right:14px;z-index:5">' + staleBadge(ageSec) + '</div></div>';
+    }
+
     let html = '<div class="grid grid-2">';
     for (const [sn, info] of deltas) {
-      html += buildDeltaPro(sn, info.name, info.data);
+      html += wrapCard(buildDeltaPro(sn, info.name, info.data), info.data_age_sec);
     }
     html += '</div>';
     for (const [sn, info] of shps) {
-      html += '<div class="grid">' + buildSHP(sn, info.name, info.data, devs) + '</div>';
+      html += '<div class="grid">' + wrapCard(buildSHP(sn, info.name, info.data, devs), info.data_age_sec) + '</div>';
     }
     for (const [sn, info] of blades) {
-      html += '<div class="grid">' + buildBlade(sn, info.name, info.data) + '</div>';
+      html += '<div class="grid">' + wrapCard(buildBlade(sn, info.name, info.data), info.data_age_sec) + '</div>';
     }
 
     // Detach live blade map containers before innerHTML rewrite so Leaflet

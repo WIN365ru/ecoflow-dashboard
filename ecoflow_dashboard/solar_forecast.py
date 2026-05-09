@@ -56,6 +56,31 @@ class SolarForecast:
         tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
         return self._forecast.get(tomorrow)
 
+    def upcoming_rain_probability(self, hours_ahead: int = 3) -> int:
+        """Max % precipitation probability across the next `hours_ahead` hours.
+        Returns 0 if forecast hasn't loaded yet."""
+        times = getattr(self, "_rain_times", None)
+        probs = getattr(self, "_rain_prob", None)
+        if not times or not probs:
+            return 0
+        now = datetime.now()
+        horizon = now + timedelta(hours=hours_ahead)
+        peak = 0
+        for t, p in zip(times, probs):
+            try:
+                ts = datetime.fromisoformat(t)
+            except Exception:
+                continue
+            if ts < now or ts > horizon:
+                continue
+            if p is None:
+                continue
+            try:
+                peak = max(peak, int(p))
+            except (TypeError, ValueError):
+                continue
+        return peak
+
     def get_recommendation(self) -> str:
         """Should we charge from grid tonight or wait for solar tomorrow?"""
         tomorrow = self.get_tomorrow()
@@ -84,7 +109,7 @@ class SolarForecast:
         params = {
             "latitude": self._lat,
             "longitude": self._lon,
-            "hourly": "shortwave_radiation,cloud_cover",
+            "hourly": "shortwave_radiation,cloud_cover,precipitation_probability",
             "daily": "sunrise,sunset",
             "timezone": "auto",
             "forecast_days": 3,
@@ -98,6 +123,10 @@ class SolarForecast:
         times = hourly.get("time", [])
         radiation = hourly.get("shortwave_radiation", [])
         cloud = hourly.get("cloud_cover", [])
+        rain_prob = hourly.get("precipitation_probability", [])
+        # Cache the raw hourly precipitation series for upcoming_rain_probability().
+        self._rain_times = times
+        self._rain_prob = rain_prob
 
         # Group by day
         by_day: dict[str, list] = {}

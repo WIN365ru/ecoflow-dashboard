@@ -36,7 +36,10 @@ BLADE_STATES = {
     0x801: ("Charging", "blue"),
 }
 
-# Blade error code translations (extend as discovered)
+# Blade error code translations (extend as discovered).
+# Codes seen in the wild (raw decimal robotLowerr → app's display code in parens):
+#   1292 → app 0700  : low battery, charge to 90% before working
+#   1795 → app 0503  : out of bounds
 BLADE_ERRORS = {
     2062: "RTK signal lost (cleared)",
     2001: "Motor overload",
@@ -47,6 +50,8 @@ BLADE_ERRORS = {
     2006: "Rain detected",
     2007: "GPS lost",
     2008: "Out of mowing zone",
+    1292: "Low battery — needs to charge to 90%",  # app code 0700
+    1795: "Out of bounds",                          # app code 0503
 }
 
 

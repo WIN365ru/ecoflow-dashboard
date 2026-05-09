@@ -191,6 +191,8 @@ def main() -> None:
         )
         if solar_forecast:
             tg_bot._solar_forecast = solar_forecast
+            if alerter:
+                alerter._solar_forecast = solar_forecast
         tg_bot.start()
         console.print("[dim]Telegram bot commands enabled[/]")
 

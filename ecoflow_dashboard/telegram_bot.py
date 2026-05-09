@@ -78,6 +78,7 @@ class TelegramBot:
             {"command": "forecast", "description": "Solar forecast (today + tomorrow)"},
             {"command": "cost",     "description": "Energy costs (today + month)"},
             {"command": "blade",    "description": "Mower runs history"},
+            {"command": "blade_debug", "description": "Dump all Blade telemetry keys"},
             {"command": "help",     "description": "Show all commands"},
         ]
         try:
@@ -150,6 +151,7 @@ class TelegramBot:
             "/cost": self._cmd_cost,
             "/blade": self._cmd_blade,
             "/b": self._cmd_blade,
+            "/blade_debug": self._cmd_blade_debug,
         }
         handler = handlers.get(cmd)
         if handler:
@@ -583,6 +585,19 @@ class TelegramBot:
                 if life_row and life_row[0]:
                     out.append(f"  ♾ Lifetime: {life_row[0]} run(s), {life_row[1]:.0f} m², {life_row[2]//3600}h")
 
+                # Battery efficiency over last 30 days
+                eff_row = conn.execute(
+                    "SELECT SUM(area_m2)/NULLIF(SUM(battery_used),0), AVG(area_m2/NULLIF(duration_sec,0))*60 "
+                    "FROM mower_runs WHERE device_sn=? AND end_time IS NOT NULL "
+                    "AND battery_used > 0 AND start_time >= ?",
+                    (sn, (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")),
+                ).fetchone()
+                if eff_row and eff_row[0]:
+                    eff_m2_per_pct = eff_row[0]
+                    speed_m2_per_min = eff_row[1] or 0
+                    out.append(f"  ⚡ Efficiency (30d): {eff_m2_per_pct:.1f} m² / % battery"
+                               + (f", {speed_m2_per_min:.1f} m²/min" if speed_m2_per_min else ""))
+
                 if last_runs:
                     out.append("\n*Recent runs:*")
                     for st, dur, area, batt, end_st, errs in last_runs:
@@ -598,6 +613,32 @@ class TelegramBot:
                 log.warning("blade history query failed: %s", e)
 
         self._send("\n".join(out))
+
+    def _cmd_blade_debug(self) -> None:
+        """Dump every key currently held for the Blade — for field discovery."""
+        blades = [(sn, dt) for sn, dt in self._device_types.items() if "blade" in dt]
+        if not blades:
+            self._send("No Blade configured.")
+            return
+        for sn, _ in blades:
+            data = self._mqtt.get_device_data(sn)
+            if not data:
+                self._send(f"`{sn}`: no data yet")
+                continue
+            keys = sorted(data.keys())
+            # Send in chunks to fit Telegram's 4 KB message cap.
+            chunk: list[str] = []
+            chunks_sent = 0
+            for k in keys:
+                v = data[k]
+                line = f"`{k}` = `{v}`"
+                if sum(len(x) for x in chunk) + len(line) > 3500:
+                    self._send(f"*Blade `{sn}` ({len(keys)} keys, part {chunks_sent+1})*\n" + "\n".join(chunk))
+                    chunk = []
+                    chunks_sent += 1
+                chunk.append(line)
+            if chunk:
+                self._send(f"*Blade `{sn}` ({len(keys)} keys, part {chunks_sent+1})*\n" + "\n".join(chunk))
 
     def _cmd_forecast(self) -> None:
         if not self._solar_forecast:
