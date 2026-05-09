@@ -252,7 +252,7 @@ class TelegramBot:
                 )
             elif "blade" in dtype:
                 BLADE_STATES = {
-                    0x500: "Idle", 0x501: "Standby", 0x502: "Mowing",
+                    0x500: "Idle", 0x501: "Charging", 0x502: "Mowing",
                     0x503: "Returning", 0x504: "Charging", 0x505: "Mapping",
                     0x506: "Paused", 0x507: "Error", 0x801: "Charging",
                 }
@@ -539,7 +539,7 @@ class TelegramBot:
             label = self._label(sn)
             data = self._mqtt.get_device_data(sn)
             BLADE_STATES = {
-                0x500: "Idle", 0x501: "Standby", 0x502: "Mowing",
+                0x500: "Idle", 0x501: "Charging", 0x502: "Mowing",
                 0x503: "Returning", 0x504: "Charging", 0x505: "Mapping",
                 0x506: "Paused", 0x507: "Error", 0x801: "Charging",
             }

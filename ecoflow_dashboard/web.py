@@ -1013,7 +1013,7 @@ function buildSHP(sn, name, d, allDevices) {
 
 const BLADE_STATES = {
   0x500: ['Idle', '#888'],
-  0x501: ['Standby', '#06b6d4'],
+  0x501: ['Charging', '#3b82f6'],
   0x502: ['Mowing', '#10b981'],
   0x503: ['Returning', '#eab308'],
   0x504: ['Charging', '#3b82f6'],
