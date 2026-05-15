@@ -475,6 +475,7 @@ class AlertManager:
         # Active errors live in errorCode.0..N — robotLowerr mirrors robotState.
         BLADE_ERRORS = {
             0x700: "Low battery — charge to 90% before working",  # 1792, app 0700
+            0x701: "Work suspended — rain detected",               # 1793, app 0701
             0x503: "Out of bounds",                                # 1283, app 0503
             2001: "Motor overload", 2002: "Bumper triggered",
             2003: "Lifted from ground", 2004: "Stuck",

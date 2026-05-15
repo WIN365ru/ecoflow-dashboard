@@ -44,6 +44,7 @@ BLADE_STATES = {
 BLADE_ERRORS = {
     # Confirmed against iOS app:
     0x700: "Low battery — charge to 90% before working",  # 1792, app 0700
+    0x701: "Work suspended — rain detected",               # 1793, app 0701
     0x503: "Out of bounds",                                # 1283, app 0503
     # Recently-cleared codes (errorCodeDelete.N) — phrasing reflects that.
     2062: "RTK signal lost (cleared)",

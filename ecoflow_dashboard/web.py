@@ -1027,6 +1027,7 @@ const BLADE_STATES = {
 // is NOT an error code.
 const BLADE_ERRORS = {
   0x700: 'Low battery — charge to 90% before working',
+  0x701: 'Work suspended — rain detected',
   0x503: 'Out of bounds',
   2062: 'RTK signal lost (cleared)',
   2001: 'Motor overload', 2002: 'Bumper triggered',
