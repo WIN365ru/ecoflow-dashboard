@@ -1026,6 +1026,8 @@ const BLADE_STATES = {
 // as 4-digit hex (e.g. 0x700 → "0700"). robotLowerr mirrors robotState and
 // is NOT an error code.
 const BLADE_ERRORS = {
+  0x300: 'Failed to exit charging station',
+  0x500: 'Emergency stop — red button pressed',
   0x502: 'Lifted from ground — safety system activated',
   0x503: 'Out of bounds',
   0x600: 'Stuck — move it from the obstacle, then press Resume',

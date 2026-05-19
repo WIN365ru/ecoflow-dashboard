@@ -481,6 +481,8 @@ class AlertManager:
         }
         # Active errors live in errorCode.0..N — robotLowerr mirrors robotState.
         BLADE_ERRORS = {
+            0x300: "Failed to exit charging station",              # 768, app 0300
+            0x500: "Emergency stop — red button pressed",          # 1280, app 0500
             0x502: "Lifted from ground — safety system activated", # 1282, app 0502
             0x503: "Out of bounds",                                # 1283, app 0503
             0x600: "Stuck — move it from the obstacle, then press Resume",  # 1536, app 0600

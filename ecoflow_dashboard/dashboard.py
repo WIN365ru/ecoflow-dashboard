@@ -42,7 +42,10 @@ BLADE_STATES = {
 # IMPORTANT: normalBleHeartBeat.robotLowerr just MIRRORS robotState — it is
 # NOT an error code. Earlier translations using robotLowerr were wrong.
 BLADE_ERRORS = {
-    # Confirmed against iOS app:
+    # Confirmed against iOS app. Note: errorCode is a separate namespace
+    # from robotState — 0x500 here = emergency stop error, not Idle state.
+    0x300: "Failed to exit charging station",              # 768, app 0300
+    0x500: "Emergency stop — red button pressed",          # 1280, app 0500
     0x502: "Lifted from ground — safety system activated", # 1282, app 0502
     0x503: "Out of bounds",                                # 1283, app 0503
     0x600: "Stuck — move it from the obstacle, then press Resume",  # 1536, app 0600
