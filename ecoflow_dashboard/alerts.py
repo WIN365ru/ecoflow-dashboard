@@ -407,17 +407,20 @@ class AlertManager:
 
         if is_discharging:
             milestone = self._get_discharge_milestone(sn, soc)
-            if milestone is not None:
+            # Throttle through the global ALERT_COOLDOWN — without this the
+            # alert re-fires every poll cycle whenever SOC bounces around a
+            # milestone (e.g. evening solar flicker producing 200+/day).
+            if milestone is not None and self._can_alert(f"discharge:{sn}:{milestone}"):
                 time_str = f"\nRemaining: {self._fmt_time(dsg_time)}" if dsg_time > 0 else ""
                 emoji = "🪫" if milestone <= 10 else "🔋"
                 self._send(
                     f"{emoji} *BATTERY {int(soc)}%*\n{label}"
                     f"\nDischarging at {total_out:.0f}W{time_str}"
                 )
-        else:
-            # Reset milestones when not discharging
-            if sn in self._discharge_milestones and self._discharge_milestones[sn] < 100:
-                self._discharge_milestones[sn] = 100
+        # Milestones are re-armed (back to 100) only when the battery has been
+        # substantially recharged — see _get_discharge_milestone. Removing the
+        # old "reset whenever not discharging" branch: brief solar bumps used
+        # to reset and the dial would re-fire on the next dip.
 
         # ── Solar charge milestones (50%, 80%, 90%, 100%) ──
         solar_watts = self._get_float(data, "mppt.inWatts") / 10
@@ -1057,9 +1060,14 @@ class AlertManager:
         return f"{m}m"
 
     def _get_discharge_milestone(self, sn: str, soc: float) -> int | None:
-        """Return SOC milestone if crossed, else None.
-        Above 20%: milestones at 80, 60, 40, 20
-        Below 20%: milestones at 15, 10, 5
+        """Return SOC milestone if crossed downward, else None.
+
+        Milestones: 80, 60, 40, 20 above 20%; 15, 10, 5 below.
+
+        Re-arming: milestones are only reset (back to 100, ready to fire again)
+        once the battery has been substantially recharged to ≥90%. Without
+        this, evening solar flicker would oscillate SOC ±5–10% around a
+        milestone and re-fire on every dip.
         """
         if soc >= 20:
             milestones = [80, 60, 40, 20]
@@ -1071,17 +1079,19 @@ class AlertManager:
             if soc <= m:
                 current_milestone = m
 
+        last = self._discharge_milestones.get(sn, 100)
+
+        # Re-arm only after a real recharge to ≥90% — small bumps don't count.
+        if soc >= 90 and last < 100:
+            self._discharge_milestones[sn] = 100
+            last = 100
+
         if current_milestone is None:
             return None
 
-        last = self._discharge_milestones.get(sn, 100)
         if current_milestone < last:
             self._discharge_milestones[sn] = current_milestone
             return current_milestone
-
-        # SOC went back up (charging) — reset tracking
-        if soc > last + 5:
-            self._discharge_milestones[sn] = 100
 
         return None
 
