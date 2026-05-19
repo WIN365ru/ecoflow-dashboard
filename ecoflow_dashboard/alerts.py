@@ -467,6 +467,13 @@ class AlertManager:
 
     def _check_blade(self, sn: str, data: dict, prev: dict, label: str, ts: str) -> None:
         """Alerts for the EcoFlow Blade robotic mower."""
+        # If we haven't heard from the mower recently, skip all checks — the
+        # offline alert is fired separately by _check_all, and acting on stale
+        # values produces absurd results (e.g. the geofence haversine against
+        # a placeholder base GPS that hasn't been updated in hours).
+        age = self._mqtt.last_update_age(sn)
+        if age == float("inf") or age > self._offline_timeout:
+            return
         BLADE_STATES = {
             0x500: "Idle", 0x501: "Charging", 0x502: "Mowing",
             0x503: "Returning", 0x504: "Charging", 0x505: "Mapping",
@@ -575,14 +582,23 @@ class AlertManager:
             self._mower_progress_seen.pop(sn, None)
 
         # ── Geofence — alert if robot is far from base ──
+        # Hard cap: ignore base GPS readings further than 1 km from the robot
+        # (the Blade ships placeholder base coords like 3.04°, 3.05° before its
+        # RTK base publishes a real fix; without this check the haversine
+        # produces nonsense distances of thousands of km).
         if self._blade_geofence_m > 0:
             r_lat = self._get_float(data, "signalInfo.robotLat")
             r_lng = self._get_float(data, "signalInfo.robotLng")
             b_lat = self._get_float(data, "signalInfo.baseLat")
             b_lng = self._get_float(data, "signalInfo.baseLng")
-            if r_lat and r_lng and b_lat and b_lng:
+            base_plausible = (
+                r_lat and r_lng and b_lat and b_lng
+                and abs(b_lat) <= 90 and abs(b_lng) <= 180
+            )
+            if base_plausible:
                 dist_m = _haversine_m(r_lat, r_lng, b_lat, b_lng)
-                if dist_m > self._blade_geofence_m:
+                # Sanity: bogus base GPS (>1 km from robot) — skip geofence.
+                if dist_m < 1000 and dist_m > self._blade_geofence_m:
                     last = self._mower_geofence_alerted.get(sn, 0)
                     if time.time() - last > self._cooldown_secs:
                         self._mower_geofence_alerted[sn] = time.time()
