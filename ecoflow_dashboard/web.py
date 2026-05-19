@@ -1026,9 +1026,11 @@ const BLADE_STATES = {
 // as 4-digit hex (e.g. 0x700 → "0700"). robotLowerr mirrors robotState and
 // is NOT an error code.
 const BLADE_ERRORS = {
+  0x502: 'Lifted from ground — safety system activated',
+  0x503: 'Out of bounds',
+  0x600: 'Stuck — move it from the obstacle, then press Resume',
   0x700: 'Low battery — charge to 90% before working',
   0x701: 'Work suspended — rain detected',
-  0x503: 'Out of bounds',
   2062: 'RTK signal lost (cleared)',
   2001: 'Motor overload', 2002: 'Bumper triggered',
   2003: 'Lifted from ground', 2004: 'Stuck', 2005: 'Battery overheat',

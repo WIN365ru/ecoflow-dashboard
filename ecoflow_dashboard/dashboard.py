@@ -43,9 +43,11 @@ BLADE_STATES = {
 # NOT an error code. Earlier translations using robotLowerr were wrong.
 BLADE_ERRORS = {
     # Confirmed against iOS app:
+    0x502: "Lifted from ground — safety system activated", # 1282, app 0502
+    0x503: "Out of bounds",                                # 1283, app 0503
+    0x600: "Stuck — move it from the obstacle, then press Resume",  # 1536, app 0600
     0x700: "Low battery — charge to 90% before working",  # 1792, app 0700
     0x701: "Work suspended — rain detected",               # 1793, app 0701
-    0x503: "Out of bounds",                                # 1283, app 0503
     # Recently-cleared codes (errorCodeDelete.N) — phrasing reflects that.
     2062: "RTK signal lost (cleared)",
     # Older guesses pre-discovery — verify each as it reappears in real use.
