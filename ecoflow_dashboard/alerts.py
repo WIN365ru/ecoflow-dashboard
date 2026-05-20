@@ -116,6 +116,11 @@ class AlertManager:
         # Outage tracking: {sn: {start_ts, start_soc1, start_soc2, ...}}
         self._outage_state: dict[str, dict] = {}
 
+        # Per-device offline notification state — {sn: {since, last_notified}}.
+        # Switched from cooldown-based alerts to transition-based so we don't
+        # re-notify every 30 min during a long outage.
+        self._offline_state: dict[str, dict] = {}
+
         # Active mower run tracking: {sn: {start_ts, battery_start}}
         self._mower_run_active: dict[str, dict] = {}
         # Stuck detection: {sn: {progress, since_ts}}
@@ -303,12 +308,29 @@ class AlertManager:
             label = self._device_label(sn)
 
             # ── Device offline detection (use MQTT heartbeat, not data comparison) ──
+            # Transition-based: fire once when the device first goes offline,
+            # once when it comes back, and optionally re-notify at 24 h if
+            # the outage drags on. The earlier _can_alert / 30-min-cooldown
+            # version re-fired every cooldown window — ~20 alerts over 10 h.
             age = self._mqtt.last_update_age(sn)
-            # Skip if never received data yet (startup) or MQTT disconnected
-            if age != float("inf") and self._mqtt.connected and age > self._offline_timeout:
-                if self._can_alert(f"offline:{sn}"):
+            if age != float("inf") and self._mqtt.connected:
+                offline_now = age > self._offline_timeout
+                state = self._offline_state.get(sn)  # None, or {"since": ts, "last_notified": ts}
+                if offline_now and state is None:
                     mins = int(age / 60)
                     self._send(f"🔴 *DEVICE OFFLINE*\n{label}\nNo data for {mins} min")
+                    self._offline_state[sn] = {"since": now, "last_notified": now}
+                elif offline_now and state is not None:
+                    # Re-notify once after 24 h if still offline.
+                    if now - state["last_notified"] >= 24 * 3600:
+                        hours = int(age / 3600)
+                        self._send(f"🔴 *STILL OFFLINE*\n{label}\nNo data for {hours} h")
+                        state["last_notified"] = now
+                elif not offline_now and state is not None:
+                    # Came back online — clear the marker and announce recovery.
+                    outage_min = int((now - state["since"]) / 60)
+                    self._offline_state.pop(sn, None)
+                    self._send(f"🟢 *DEVICE BACK ONLINE*\n{label}\nWas offline for {outage_min} min")
 
             if "panel" in dtype:
                 self._check_shp(sn, data, prev, label, ts)
