@@ -1033,6 +1033,7 @@ const BLADE_ERRORS = {
   0x600: 'Stuck — move it from the obstacle, then press Resume',
   0x700: 'Low battery — charge to 90% before working',
   0x701: 'Work suspended — rain detected',
+  0xFF28: 'Weak satellite signal — wait for blue tail light or rescan',
   2062: 'RTK signal lost (cleared)',
   2001: 'Motor overload', 2002: 'Bumper triggered',
   2003: 'Lifted from ground', 2004: 'Stuck', 2005: 'Battery overheat',
