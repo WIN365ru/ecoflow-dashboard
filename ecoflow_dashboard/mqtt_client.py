@@ -151,25 +151,51 @@ class EcoFlowMqttClient:
         self._client.publish(topic, json.dumps(msg), qos=1)
         log.info("Sent command to %s: %s", sn, params)
 
-    def send_blade_raw(self, sn: str, payload: dict) -> None:
-        """Publish a flat command payload to the Blade's set topic.
+    def send_blade_command(self, sn: str, module_type: int, operate_type: str, params: dict) -> None:
+        """Publish a Blade command with the iOS-app envelope.
 
-        Unlike send_command, the Blade does NOT use the
-        {"from":…, "params":{…}} envelope — the iOS app publishes a flat
-        dict directly, e.g. {"cmd": 2, "x": 0, "y": 0, "sessionID": 457}.
-        We replicate exactly what was observed on the wire. A fresh random
-        sessionID is injected if the caller didn't supply one.
+        Observed on the wire (decoded from the broker echo):
+          moduleType=1  operateType=controlCmd  params={"cmd":2,"x":0,"y":0,"sessionID":R}
+          moduleType=29 operateType=setWorkMode params={"mode":1,"leafHeight":15,...}
+
+        A fresh random sessionID is injected into params if absent.
         """
         topic = f"/app/{self._creds.user_id}/{sn}/thing/property/set"
-        msg = dict(payload)
-        msg.setdefault("sessionID", random.randint(1, 1000))
+        p = dict(params)
+        p.setdefault("sessionID", random.randint(1, 1000))
+        msg = {
+            "from": "Android",
+            "lang": "en-us",
+            "id": str(random.randint(100000, 999999)),
+            "moduleType": module_type,
+            "operateType": operate_type,
+            "version": "1.0",
+            "params": p,
+        }
         self._client.publish(topic, json.dumps(msg), qos=1)
-        log.info("Sent Blade command to %s: %s", sn, msg)
+        log.info("Sent Blade command to %s: mt=%s ot=%s params=%s", sn, module_type, operate_type, p)
 
     def send_blade_cmd(self, sn: str, cmd: int, x: int = 0, y: int = 0) -> None:
-        """Convenience wrapper for the Blade 'cmd' movement/action family:
-        {"cmd": <cmd>, "x": x, "y": y, "sessionID": <random>}."""
-        self.send_blade_raw(sn, {"cmd": cmd, "x": x, "y": y})
+        """Convenience wrapper for the controlCmd family (start/pause/dock/etc.):
+        moduleType=1, operateType=controlCmd, params={"cmd":cmd,"x":x,"y":y}."""
+        self.send_blade_command(sn, 1, "controlCmd", {"cmd": cmd, "x": x, "y": y})
+
+    def send_blade_raw(self, sn: str, payload: dict) -> None:
+        """Replay a captured Blade payload.
+
+        If the payload already carries the envelope (moduleType + operateType
+        + params), it is published as-is (with a fresh sessionID in params).
+        If it's bare params containing a 'cmd', it's treated as a controlCmd.
+        """
+        if "moduleType" in payload and "params" in payload:
+            mt = payload.get("moduleType", 1)
+            ot = payload.get("operateType", "controlCmd")
+            self.send_blade_command(sn, mt, ot, payload.get("params", {}))
+        elif "cmd" in payload:
+            self.send_blade_command(sn, 1, "controlCmd", payload)
+        else:
+            # Unknown shape — publish a best-effort controlCmd envelope.
+            self.send_blade_command(sn, 1, "controlCmd", payload)
 
     def get_device_data(self, sn: str) -> dict[str, object]:
         with self._lock:
