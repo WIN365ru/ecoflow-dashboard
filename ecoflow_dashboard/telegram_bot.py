@@ -154,13 +154,14 @@ class TelegramBot:
             "/b": self._cmd_blade,
             "/blade_debug": self._cmd_blade_debug,
             "/blade_raw": self._cmd_blade_raw,
+            "/blade_cmd": self._cmd_blade_cmd,
             "/blade_obs": self._cmd_blade_observed,
         }
         handler = handlers.get(cmd)
         if handler:
             # Commands that need the full message body get it; the rest run
             # with no args. Keeps the existing zero-arg handlers untouched.
-            if cmd in ("/blade_raw",):
+            if cmd in ("/blade_raw", "/blade_cmd"):
                 handler(text)
             else:
                 handler()
@@ -708,18 +709,23 @@ class TelegramBot:
                 lines.append(f"`-{age}s`  moduleType=`{mt}` operateType=`{ot}`\n  params=`{pstr}`")
             self._send("\n".join(lines))
 
+    def _first_blade_sn(self) -> str | None:
+        return next((s for s, dt in self._device_types.items() if "blade" in dt), None)
+
     def _cmd_blade_raw(self, text: str) -> None:
-        """Send arbitrary MQTT params to the Blade. Gated by env BLADE_RAW=1.
-        Usage: /blade_raw {"cmdSet":11,"id":1,"params":{"action":1}}
-        Or:    /blade_raw H101...:{"...":...}  to target a specific SN."""
+        """Send a flat command payload to the Blade. Gated by env BLADE_RAW=1.
+
+        The Blade does NOT use the {"params":{…}} envelope — the iOS app
+        publishes a flat dict directly. So we publish exactly the JSON given.
+        Usage: /blade_raw {"cmd":2,"x":0,"y":0}
+        Or:    /blade_raw H101...:{"cmd":2,...}  to target a specific SN."""
         if os.environ.get("BLADE_RAW", "0") not in ("1", "true", "yes"):
-            self._send("`/blade_raw` is disabled. Set `BLADE_RAW=1` in env to enable. "
-                       "⚠️ Sends raw MQTT commands — only use captured JSON.")
+            self._send("`/blade_raw` is disabled. Set `BLADE_RAW=1` in env to enable.\n"
+                       "⚠️ Sends raw MQTT commands to a live mower — only use captured JSON.")
             return
-        # Strip the command name; the rest is the payload (optionally `SN:json`).
         body = text.split(None, 1)[1] if " " in text else ""
         if not body:
-            self._send("Usage: `/blade_raw {\"cmdSet\":11,\"id\":1,\"params\":{...}}`\n"
+            self._send("Usage: `/blade_raw {\"cmd\":2,\"x\":0,\"y\":0}`\n"
                        "Or with SN: `/blade_raw H101ZEB...0753:{...}`")
             return
         sn, _, json_text = body.partition(":")
@@ -727,22 +733,50 @@ class TelegramBot:
             sn = sn.strip()
         else:
             json_text = body
-            blades = [s for s, dt in self._device_types.items() if "blade" in dt]
-            if not blades:
+            sn = self._first_blade_sn()
+            if not sn:
                 self._send("No Blade configured.")
                 return
-            sn = blades[0]
         try:
-            params = json.loads(json_text)
+            payload = json.loads(json_text)
         except json.JSONDecodeError as e:
             self._send(f"❌ Invalid JSON: {e}")
             return
-        if not isinstance(params, dict):
+        if not isinstance(payload, dict):
             self._send("❌ Payload must be a JSON object.")
             return
         try:
-            self._mqtt.send_command(sn, params)
-            self._send(f"✅ Sent to `{sn}`:\n`{json.dumps(params)[:300]}`")
+            # Flat publish — this is what the Blade actually expects.
+            self._mqtt.send_blade_raw(sn, payload)
+            self._send(f"✅ Sent (flat) to `{sn}`:\n`{json.dumps(payload)[:300]}`")
+        except Exception as e:
+            self._send(f"❌ Send failed: {e}")
+
+    def _cmd_blade_cmd(self, text: str) -> None:
+        """Send a single 'cmd' family action to the Blade for code discovery.
+        Gated by BLADE_RAW=1. Usage: /blade_cmd 2   (sends {"cmd":2,"x":0,"y":0})
+
+        ⚠️ This moves/controls a live mower. Only run codes you understand.
+        Known: cmd 2 = Continue/Resume."""
+        if os.environ.get("BLADE_RAW", "0") not in ("1", "true", "yes"):
+            self._send("`/blade_cmd` is disabled. Set `BLADE_RAW=1` in env to enable.\n"
+                       "⚠️ Sends control commands to a live mower.")
+            return
+        parts = text.split()
+        if len(parts) < 2 or not parts[1].lstrip("-").isdigit():
+            self._send("Usage: `/blade_cmd <number>`\n"
+                       "e.g. `/blade_cmd 2` (Continue/Resume — the only confirmed code).\n"
+                       "Capture others with /blade\\_obs before sending.")
+            return
+        cmd = int(parts[1])
+        sn = self._first_blade_sn()
+        if not sn:
+            self._send("No Blade configured.")
+            return
+        try:
+            self._mqtt.send_blade_cmd(sn, cmd)
+            self._send(f"✅ Sent `cmd={cmd}` to `{sn}`.\nWatch /status to see what it does, "
+                       f"then tell me so I can label it.")
         except Exception as e:
             self._send(f"❌ Send failed: {e}")
 

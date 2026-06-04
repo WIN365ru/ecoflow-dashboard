@@ -151,6 +151,26 @@ class EcoFlowMqttClient:
         self._client.publish(topic, json.dumps(msg), qos=1)
         log.info("Sent command to %s: %s", sn, params)
 
+    def send_blade_raw(self, sn: str, payload: dict) -> None:
+        """Publish a flat command payload to the Blade's set topic.
+
+        Unlike send_command, the Blade does NOT use the
+        {"from":…, "params":{…}} envelope — the iOS app publishes a flat
+        dict directly, e.g. {"cmd": 2, "x": 0, "y": 0, "sessionID": 457}.
+        We replicate exactly what was observed on the wire. A fresh random
+        sessionID is injected if the caller didn't supply one.
+        """
+        topic = f"/app/{self._creds.user_id}/{sn}/thing/property/set"
+        msg = dict(payload)
+        msg.setdefault("sessionID", random.randint(1, 1000))
+        self._client.publish(topic, json.dumps(msg), qos=1)
+        log.info("Sent Blade command to %s: %s", sn, msg)
+
+    def send_blade_cmd(self, sn: str, cmd: int, x: int = 0, y: int = 0) -> None:
+        """Convenience wrapper for the Blade 'cmd' movement/action family:
+        {"cmd": <cmd>, "x": x, "y": y, "sessionID": <random>}."""
+        self.send_blade_raw(sn, {"cmd": cmd, "x": x, "y": y})
+
     def get_device_data(self, sn: str) -> dict[str, object]:
         with self._lock:
             return dict(self._data.get(sn, {}))
