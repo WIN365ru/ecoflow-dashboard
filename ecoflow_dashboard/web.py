@@ -1018,6 +1018,7 @@ const BLADE_STATES = {
   0x503: ['Returning', '#eab308'],
   0x504: ['Charging', '#3b82f6'],
   0x505: ['Mapping', '#a855f7'],
+  0x402: ['Paused', '#eab308'],
   0x506: ['Paused', '#eab308'],
   0x507: ['Error', '#ef4444'],
   0x801: ['Charging', '#3b82f6'],

@@ -262,7 +262,7 @@ class TelegramBot:
                 BLADE_STATES = {
                     0x500: "Idle", 0x501: "Charging", 0x502: "Mowing",
                     0x503: "Returning", 0x504: "Charging", 0x505: "Mapping",
-                    0x506: "Paused", 0x507: "Error", 0x801: "Charging",
+                    0x506: "Paused", 0x507: "Error", 0x801: "Charging", 0x402: "Paused",
                 }
                 battery = self._gf(data, "normalBleHeartBeat.batteryRemainPercent")
                 state_code = int(self._gf(data, "normalBleHeartBeat.robotState"))
@@ -557,7 +557,7 @@ class TelegramBot:
             BLADE_STATES = {
                 0x500: "Idle", 0x501: "Charging", 0x502: "Mowing",
                 0x503: "Returning", 0x504: "Charging", 0x505: "Mapping",
-                0x506: "Paused", 0x507: "Error", 0x801: "Charging",
+                0x506: "Paused", 0x507: "Error", 0x801: "Charging", 0x402: "Paused",
             }
             battery = self._gf(data, "normalBleHeartBeat.batteryRemainPercent")
             state_code = int(self._gf(data, "normalBleHeartBeat.robotState"))

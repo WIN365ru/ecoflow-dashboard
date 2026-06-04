@@ -25,6 +25,7 @@ DEVICE_TYPE_LABELS = {
 
 # Blade robot state codes (decoded from observed values)
 BLADE_STATES = {
+    0x402: ("Paused", "yellow"),   # observed: paused mid-task (matches iOS "Pause")
     0x500: ("Idle", "dim"),
     0x501: ("Charging", "blue"),  # observed: low-battery charging on dock (matches iOS)
     0x502: ("Mowing", "green"),

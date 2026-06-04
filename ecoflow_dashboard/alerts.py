@@ -177,7 +177,7 @@ class AlertManager:
             elif "blade" in dtype:
                 BLADE_STATES = {0x500: "Idle", 0x501: "Charging", 0x502: "Mowing",
                                 0x503: "Returning", 0x504: "Charging", 0x505: "Mapping",
-                                0x506: "Paused", 0x507: "Error", 0x801: "Charging"}
+                                0x506: "Paused", 0x507: "Error", 0x801: "Charging", 0x402: "Paused", 0x402: "Paused", 0x402: "Paused"}
                 battery = self._get_float(data, "normalBleHeartBeat.batteryRemainPercent")
                 state_code = int(self._get_float(data, "normalBleHeartBeat.robotState"))
                 state = BLADE_STATES.get(state_code, f"0x{state_code:X}")
@@ -502,7 +502,7 @@ class AlertManager:
         BLADE_STATES = {
             0x500: "Idle", 0x501: "Charging", 0x502: "Mowing",
             0x503: "Returning", 0x504: "Charging", 0x505: "Mapping",
-            0x506: "Paused", 0x507: "Error", 0x801: "Charging",
+            0x506: "Paused", 0x507: "Error", 0x801: "Charging", 0x402: "Paused",
         }
         # Active errors live in errorCode.0..N — robotLowerr mirrors robotState.
         BLADE_ERRORS = {
@@ -995,7 +995,7 @@ class AlertManager:
                 BLADE_STATES = {
                     0x500: "Idle", 0x501: "Charging", 0x502: "Mowing",
                     0x503: "Returning", 0x504: "Charging", 0x505: "Mapping",
-                    0x506: "Paused", 0x507: "Error", 0x801: "Charging",
+                    0x506: "Paused", 0x507: "Error", 0x801: "Charging", 0x402: "Paused", 0x402: "Paused",
                 }
                 battery = self._get_float(data, "normalBleHeartBeat.batteryRemainPercent")
                 state_code = int(self._get_float(data, "normalBleHeartBeat.robotState"))
