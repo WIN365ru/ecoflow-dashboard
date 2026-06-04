@@ -1034,6 +1034,8 @@ const BLADE_ERRORS = {
   0x600: 'Stuck — move it from the obstacle, then press Resume',
   0x700: 'Low battery — charge to 90% before working',
   0x701: 'Work suspended — rain detected',
+  0xFF0E: 'Unable to begin work — move mower to charging station and retry',
+  0xFF13: 'Unable to return to base station',
   0xFF28: 'Weak satellite signal — wait for blue tail light or rescan',
   2062: 'RTK signal lost (cleared)',
   2001: 'Motor overload', 2002: 'Bumper triggered',

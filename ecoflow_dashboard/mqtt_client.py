@@ -176,9 +176,15 @@ class EcoFlowMqttClient:
         log.info("Sent Blade command to %s: mt=%s ot=%s params=%s", sn, module_type, operate_type, p)
 
     def send_blade_cmd(self, sn: str, cmd: int, x: int = 0, y: int = 0) -> None:
-        """Convenience wrapper for the controlCmd family (start/pause/dock/etc.):
+        """Convenience wrapper for the controlCmd family (resume/pause/dock/etc.):
         moduleType=1, operateType=controlCmd, params={"cmd":cmd,"x":x,"y":y}."""
         self.send_blade_command(sn, 1, "controlCmd", {"cmd": cmd, "x": x, "y": y})
+
+    def send_blade_start(self, sn: str, obj_ids: list[int] | None = None) -> None:
+        """Start a mowing task. Separate family from controlCmd:
+        moduleType=20, operateType=startTask, params={"objID":[...]}.
+        objID is the list of zones/maps to mow; [0] = default/all."""
+        self.send_blade_command(sn, 20, "startTask", {"objID": obj_ids or [0]})
 
     def send_blade_raw(self, sn: str, payload: dict) -> None:
         """Replay a captured Blade payload.

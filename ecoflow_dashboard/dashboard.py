@@ -52,6 +52,8 @@ BLADE_ERRORS = {
     0x600: "Stuck — move it from the obstacle, then press Resume",  # 1536, app 0600
     0x700: "Low battery — charge to 90% before working",  # 1792, app 0700
     0x701: "Work suspended — rain detected",               # 1793, app 0701
+    0xFF0E: "Unable to begin work — move mower to charging station and retry",  # 65294, app FF0E
+    0xFF13: "Unable to return to base station",            # 65299, app FF13
     0xFF28: "Weak satellite signal — wait for blue tail light or rescan",  # 65320, app FF28
     # Recently-cleared codes (errorCodeDelete.N) — phrasing reflects that.
     2062: "RTK signal lost (cleared)",
