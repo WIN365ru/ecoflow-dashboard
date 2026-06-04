@@ -668,7 +668,11 @@ class TelegramBot:
     def _cmd_blade_observed(self) -> None:
         """Show the most recent commands the broker echoed for the Blade.
         Useful for reverse-engineering: open the iOS app, press a button,
-        then run /blade_obs in Telegram to capture the command JSON."""
+        then run /blade_obs in Telegram to capture the command JSON.
+
+        Shows the FULL envelope (moduleType + operateType + params) for
+        'set' commands so they can be replicated exactly, and filters out
+        our own keepalive 'get'/inquire polls by default."""
         blades = [(sn, dt) for sn, dt in self._device_types.items() if "blade" in dt]
         if not blades:
             self._send("No Blade configured.")
@@ -681,15 +685,27 @@ class TelegramBot:
                            "Tip: open the EcoFlow iOS app, press a Blade button,\n"
                            "then run /blade\\_obs again.")
                 continue
-            lines = [f"*Blade `{sn}` — last {len(hist)} commands*"]
-            for entry in hist[-10:]:
+            # Only 'set' entries are real commands; 'get' are our inquire polls.
+            sets = [e for e in hist if e.get("topic") == "set"]
+            if not sets:
+                self._send(f"`{sn}`: only keepalive polls seen, no commands.\n"
+                           "Press a Blade *action* button in the iOS app, then "
+                           "run /blade\\_obs again.")
+                continue
+            lines = [f"*Blade `{sn}` — last {len(sets)} command(s)*",
+                     "_(full envelope, for control wiring)_"]
+            for entry in sets[-6:]:
                 age = int(time.time() - entry["ts"])
-                topic_kind = entry.get("topic", "?")
                 payload = entry.get("payload", {})
-                # Compact payload preview — params first, then top-level keys.
-                params = payload.get("params") if isinstance(payload, dict) else None
-                summary = json.dumps(params or payload, ensure_ascii=False)[:200]
-                lines.append(f"`-{age}s` [{topic_kind}] `{summary}`")
+                if isinstance(payload, dict):
+                    mt = payload.get("moduleType", "?")
+                    ot = payload.get("operateType", "?")
+                    params = payload.get("params", payload)
+                else:
+                    mt = ot = "?"
+                    params = payload
+                pstr = json.dumps(params, ensure_ascii=False)[:300]
+                lines.append(f"`-{age}s`  moduleType=`{mt}` operateType=`{ot}`\n  params=`{pstr}`")
             self._send("\n".join(lines))
 
     def _cmd_blade_raw(self, text: str) -> None:
